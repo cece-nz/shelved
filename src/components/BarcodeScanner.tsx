@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { BrowserMultiFormatReader } from '@zxing/browser'
+import { BarcodeFormat, DecodeHintType } from '@zxing/library'
 import { X } from 'lucide-react'
 
 type Props = {
@@ -40,7 +41,26 @@ export function BarcodeScanner({ open, onClose, onDetected }: Props) {
     setError(null)
     setLastSeen(null)
     setStreaming(false)
-    const reader = new BrowserMultiFormatReader()
+
+    // Narrow ZXing to book barcodes (vs trying QR/Data-Matrix/etc each
+    // frame) and turn on TRY_HARDER for more aggressive decode passes
+    // (rotation, scaling). Higher CPU, much higher hit rate on a single
+    // book barcode held in view.
+    const hints = new Map<DecodeHintType, unknown>()
+    hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+      BarcodeFormat.EAN_13,
+      BarcodeFormat.EAN_8,
+      BarcodeFormat.UPC_A,
+      BarcodeFormat.UPC_E,
+    ])
+    hints.set(DecodeHintType.TRY_HARDER, true)
+
+    const reader = new BrowserMultiFormatReader(hints, {
+      // Default is 500ms between attempts; 100ms gives ~5x more chances
+      // per second to catch a sharp frame.
+      delayBetweenScanAttempts: 100,
+    })
+
     let controls: { stop: () => void } | null = null
     let stopped = false
 
@@ -48,7 +68,16 @@ export function BarcodeScanner({ open, onClose, onDetected }: Props) {
       try {
         if (!videoRef.current) return
         controls = await reader.decodeFromConstraints(
-          { video: { facingMode: { ideal: 'environment' } } },
+          {
+            video: {
+              facingMode: { ideal: 'environment' },
+              // Higher capture resolution makes the barcode crisp even
+              // when held at a comfortable distance (iOS Safari often
+              // defaults to ~640x480 which makes small bars mush).
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            },
+          },
           videoRef.current,
           (result) => {
             if (stopped || !result) return
