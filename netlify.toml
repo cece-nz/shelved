@@ -1,0 +1,18 @@
+# Netlify build config.
+#
+# - command/publish: Vite outputs the built site to `dist/`.
+# - The Node version comes from .nvmrc (Netlify reads it automatically).
+# - The SPA redirect is critical: react-router uses paths like /tbr and
+#   /book/<id>, but those files don't exist on disk. Without the redirect,
+#   refreshing the page on a non-root URL would 404. The redirect makes
+#   Netlify serve index.html for any unmatched path, then react-router
+#   takes over client-side.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
