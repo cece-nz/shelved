@@ -25,6 +25,8 @@ export function BarcodeScanner({ open, onClose, onDetected }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const onDetectedRef = useRef(onDetected)
   const [error, setError] = useState<string | null>(null)
+  const [lastSeen, setLastSeen] = useState<string | null>(null)
+  const [streaming, setStreaming] = useState(false)
 
   // Keep latest callback in a ref so the camera effect doesn't restart
   // when the parent re-renders.
@@ -36,6 +38,8 @@ export function BarcodeScanner({ open, onClose, onDetected }: Props) {
     if (!open) return
 
     setError(null)
+    setLastSeen(null)
+    setStreaming(false)
     const reader = new BrowserMultiFormatReader()
     let controls: { stop: () => void } | null = null
     let stopped = false
@@ -47,8 +51,9 @@ export function BarcodeScanner({ open, onClose, onDetected }: Props) {
           { video: { facingMode: { ideal: 'environment' } } },
           videoRef.current,
           (result) => {
-            if (!result || stopped) return
+            if (stopped || !result) return
             const text = result.getText()
+            setLastSeen(text)
             if (isLikelyIsbn(text)) {
               stopped = true
               controls?.stop()
@@ -56,6 +61,7 @@ export function BarcodeScanner({ open, onClose, onDetected }: Props) {
             }
           },
         )
+        if (!stopped) setStreaming(true)
       } catch (e) {
         const err = e as Error
         if (err.name === 'NotAllowedError') {
@@ -109,11 +115,27 @@ export function BarcodeScanner({ open, onClose, onDetected }: Props) {
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="w-4/5 max-w-sm h-32 border-2 border-white/70 rounded-md" />
             </div>
-            {error && (
-              <div className="absolute inset-x-4 bottom-8 p-3 bg-red-600/90 text-white text-sm rounded-md">
-                {error}
-              </div>
-            )}
+            {/* Status strip — shows scanner heartbeat + last-seen text so
+                you can tell whether the camera is decoding at all and, if
+                it is, what it found (useful when the value isn't a book
+                barcode). */}
+            <div className="absolute inset-x-4 bottom-8 space-y-2">
+              {error ? (
+                <div className="p-3 bg-red-600/90 text-white text-sm rounded-md">
+                  {error}
+                </div>
+              ) : (
+                <div className="p-2 bg-black/60 text-white text-xs rounded-md text-center">
+                  {streaming ? 'Scanning…' : 'Starting camera…'}
+                  {lastSeen && (
+                    <div className="mt-1 text-yellow-200 font-mono break-all">
+                      Saw: {lastSeen}
+                      {!isLikelyIsbn(lastSeen) && ' (not an ISBN)'}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </motion.div>
       )}
