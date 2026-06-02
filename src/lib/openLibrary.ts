@@ -20,6 +20,12 @@ export type IsbnLookupResult = {
   categories: string[]
   pageCount: number | null
   coverUrl: string | null
+  /**
+   * Open Library "Work" identifier (e.g. "OL66554W"). Stable across
+   * editions: paperback + hardcover + audiobook of the same novel
+   * share it. Null when OL has the ISBN but no associated work — rare.
+   */
+  workId: string | null
 }
 
 export class IsbnNotFoundError extends Error {
@@ -27,6 +33,69 @@ export class IsbnNotFoundError extends Error {
     super(`No book found for ISBN ${isbn}`)
     this.name = 'IsbnNotFoundError'
   }
+}
+
+export type TitleSearchResult = {
+  /** Open Library work key, e.g. "OL12345W". */
+  workKey: string
+  title: string
+  authors: string[]
+  firstPublishYear: number | null
+  coverUrl: string | null
+  /** Up to a few ISBNs to feed into the existing ISBN lookup pipeline. */
+  isbns: string[]
+}
+
+type SearchDoc = {
+  key?: string
+  title?: string
+  author_name?: string[]
+  first_publish_year?: number
+  cover_i?: number
+  isbn?: string[]
+}
+
+/**
+ * Search Open Library by title. Returns up to `limit` matches that
+ * have at least one ISBN (so the existing ISBN-lookup pipeline can
+ * pick up cover, description, work-id, and dedup work).
+ */
+export async function searchByTitle(
+  query: string,
+  limit = 10,
+): Promise<TitleSearchResult[]> {
+  const url =
+    `https://openlibrary.org/search.json?title=${encodeURIComponent(query)}` +
+    `&fields=key,title,author_name,first_publish_year,cover_i,isbn&limit=${limit}`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Search failed: ${res.status} ${res.statusText}`)
+  const data = (await res.json()) as { docs?: SearchDoc[] }
+
+  return (data.docs ?? [])
+    .map((doc): TitleSearchResult => {
+      const isbns = (doc.isbn ?? [])
+        .map((i) => i.replace(/[\s-]/g, '').toUpperCase())
+        .filter((i) => /^(\d{13}|\d{9}[\dX])$/.test(i))
+      return {
+        workKey: doc.key?.replace(/^\/works\//, '') ?? '',
+        title: doc.title ?? 'Untitled',
+        authors: doc.author_name ?? [],
+        firstPublishYear: doc.first_publish_year ?? null,
+        coverUrl: doc.cover_i
+          ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`
+          : null,
+        // Prefer ISBN-13s when both exist.
+        isbns: [...isbns].sort((a, b) => b.length - a.length).slice(0, 5),
+      }
+    })
+    .filter((r) => r.isbns.length > 0)
+}
+
+/** Heuristic: numeric-only, 10-17 chars (allowing hyphens/spaces) = ISBN-shaped. */
+export function looksLikeIsbn(input: string): boolean {
+  const cleaned = input.replace(/[\s-]/g, '')
+  if (cleaned.length < 10 || cleaned.length > 17) return false
+  return /^[0-9X]+$/i.test(cleaned)
 }
 
 type DataEndpointBook = {
@@ -42,6 +111,7 @@ type DataEndpointResponse = Record<string, DataEndpointBook>
 
 type IsbnEndpointResponse = {
   description?: string | { value?: string }
+  works?: { key?: string }[]
 }
 
 /**
@@ -75,6 +145,8 @@ export async function lookupByIsbn(rawIsbn: string): Promise<IsbnLookupResult> {
     pageCount: book.number_of_pages ?? null,
     description:
       isbnRes.status === 'fulfilled' ? extractDescription(isbnRes.value) : null,
+    workId:
+      isbnRes.status === 'fulfilled' ? extractWorkId(isbnRes.value) : null,
     // Cap categories — OL often returns 30+ subjects, mostly low-value.
     categories: (book.subjects ?? [])
       .map((s) => s.name)
@@ -106,4 +178,11 @@ function extractDescription(payload: IsbnEndpointResponse): string | null {
   if (typeof d === 'string') return d
   if (d && typeof d === 'object' && typeof d.value === 'string') return d.value
   return null
+}
+
+function extractWorkId(payload: IsbnEndpointResponse): string | null {
+  const key = payload.works?.[0]?.key
+  if (!key) return null
+  const match = key.match(/^\/works\/(OL[A-Z0-9]+W)$/)
+  return match ? match[1] : null
 }

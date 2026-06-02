@@ -31,6 +31,9 @@ export type BookRow = Timestamps & {
   tags: string[]
   cover_path: string | null
   rating: number | null
+  openlibrary_work_id: string | null
+  series_name: string | null
+  series_index: number | null
 }
 
 export type EditionRow = Timestamps & {
@@ -49,6 +52,10 @@ export type EditionRow = Timestamps & {
   currency: string | null
   condition: Condition | null
   notes: string | null
+  cover_path: string | null
+  started_at: string | null
+  finished_at: string | null
+  is_trophy: boolean
 }
 
 export type ReadingSessionRow = {

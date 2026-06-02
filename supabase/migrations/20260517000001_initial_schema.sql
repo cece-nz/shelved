@@ -30,7 +30,10 @@ create table books (
   genres text[] not null default '{}',
   tags text[] not null default '{}',
   cover_path text,
-  rating int check (rating between 1 and 5),
+  rating numeric(2, 1) check (rating is null or (rating >= 0 and rating <= 5)),
+  openlibrary_work_id text,
+  series_name text,
+  series_index numeric(5, 2),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -39,6 +42,12 @@ create index books_user_id_idx on books (user_id);
 create index books_authors_gin on books using gin (authors);
 create index books_genres_gin on books using gin (genres);
 create index books_tags_gin on books using gin (tags);
+create index books_user_workid_idx
+  on books (user_id, openlibrary_work_id)
+  where openlibrary_work_id is not null;
+create index books_user_series_idx
+  on books (user_id, series_name, series_index)
+  where series_name is not null;
 
 create trigger books_updated_at
   before update on books
@@ -66,6 +75,10 @@ create table editions (
   currency text default 'AUD',
   condition text check (condition in ('new','second_hand','unknown')),
   notes text,
+  cover_path text,
+  started_at date,
+  finished_at date,
+  is_trophy boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

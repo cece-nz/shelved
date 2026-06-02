@@ -7,6 +7,8 @@ import { TBR } from './routes/TBR.tsx'
 import { Wishlist } from './routes/Wishlist.tsx'
 import { AddBook } from './routes/AddBook.tsx'
 import { BookDetail } from './routes/BookDetail.tsx'
+import { AuthorPage } from './routes/AuthorPage.tsx'
+import { SeriesPage } from './routes/SeriesPage.tsx'
 import { NotFound } from './routes/NotFound.tsx'
 
 function App() {
@@ -14,7 +16,7 @@ function App() {
 
   if (loading) {
     return (
-      <div className="min-h-svh flex items-center justify-center text-stone-500 text-sm">
+      <div className="min-h-svh flex items-center justify-center text-slate-500 text-sm">
         Loading…
       </div>
     )
@@ -30,6 +32,8 @@ function App() {
         <Route path="wishlist" element={<Wishlist />} />
         <Route path="add" element={<AddBook />} />
         <Route path="book/:id" element={<BookDetail />} />
+        <Route path="author/:name" element={<AuthorPage />} />
+        <Route path="series/:name" element={<SeriesPage />} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
