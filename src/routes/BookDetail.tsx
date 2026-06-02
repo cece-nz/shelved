@@ -1,24 +1,20 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { ChevronLeft, Trash2, Send, BookMarked, ChevronUp, ChevronDown, X, Image as ImageIcon, Upload, Plus, Trophy, Pencil, Check } from 'lucide-react'
+import { ChevronLeft, Trash2, Send, BookMarked, BookOpen, CheckCircle2, ChevronUp, ChevronDown, X, Image as ImageIcon, Upload, Plus, Pencil, Check } from 'lucide-react'
 import {
   useBook,
+  useBooks,
   useDeleteBook,
   useSetCoverFromFile,
   useSetCoverFromUrl,
   useUpdateBook,
+  useUpdateReadingStatus,
 } from '../queries/books.ts'
 import {
   useEditions,
   useDeleteEdition,
-  useAddEdition,
   useSetEditionCoverFromFile,
   useClearEditionCover,
-  useUpdateEditionDates,
-  useUpdateEditionTrophy,
 } from '../queries/editions.ts'
 import { useNotes, useAddNote, useDeleteNote } from '../queries/notes.ts'
 import {
@@ -30,7 +26,7 @@ import { Cover } from '../components/Cover.tsx'
 import { FormatBadge } from '../components/FormatBadge.tsx'
 import { StarRating } from '../components/StarRating.tsx'
 import { formatDate } from '../lib/dates.ts'
-import type { Condition, EditionRow, Format, NoteRow } from '../lib/database.types.ts'
+import type { EditionRow, NoteRow, ReadingStatus } from '../lib/database.types.ts'
 
 export function BookDetail() {
   const { id } = useParams<{ id: string }>()
@@ -41,17 +37,15 @@ export function BookDetail() {
     <>
       <title>{book ? `${book.title} · Shelved` : 'Book · Shelved'}</title>
 
-      <header className="mb-4 flex items-center gap-2">
+      <header className="mb-4">
         <Link
           to="/"
           aria-label="Back to bookcase"
-          className="p-1 text-slate-500 hover:text-slate-800"
+          className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800"
         >
-          <ChevronLeft className="h-5 w-5" />
+          <ChevronLeft className="h-4 w-4" />
+          Back
         </Link>
-        <h1 className="text-2xl font-semibold truncate flex-1">
-          {book?.title ?? 'Book'}
-        </h1>
       </header>
 
       {isPending && <p className="text-sm text-slate-500">Loading…</p>}
@@ -63,23 +57,41 @@ export function BookDetail() {
 
       {book && (
         <>
-          <div className="flex gap-4">
-            <div className="flex flex-col gap-1 shrink-0">
+          <div className="flex gap-4 sm:gap-6">
+            <div className="flex flex-col gap-1.5 shrink-0">
               <Cover
                 path={book.cover_path}
                 title={book.title}
                 authors={book.authors}
                 version={book.updated_at}
-                className="w-28 h-40"
+                className="w-32 h-48 sm:w-44 sm:h-64 shadow-md rounded-md"
               />
               <CoverUrlEditor bookId={book.id} hasCover={Boolean(book.cover_path)} />
             </div>
-            <MetadataBlock book={book} />
+            <MetadataBlock
+              book={book}
+              pageCount={
+                editions.find((e) => e.page_count != null)?.page_count ?? null
+              }
+            />
           </div>
+
+          {book.description && (
+            <p className="mt-5 text-sm text-slate-700 leading-relaxed whitespace-pre-line">
+              {book.description}
+            </p>
+          )}
+
+          <section className="mt-5">
+            <h2 className="text-sm font-medium text-slate-700 mb-2">Genres</h2>
+            <GenreChips book={book} />
+          </section>
 
           <TbrControls bookId={book.id} />
           <Editions editions={editions} book={book} />
           <Notes bookId={book.id} />
+          <SeriesShelf book={book} />
+          <MoreByAuthor book={book} />
           <DangerZone bookId={book.id} title={book.title} />
         </>
       )}
@@ -87,7 +99,13 @@ export function BookDetail() {
   )
 }
 
-function MetadataBlock({ book }: { book: import('../lib/database.types.ts').BookRow }) {
+function MetadataBlock({
+  book,
+  pageCount,
+}: {
+  book: import('../lib/database.types.ts').BookRow
+  pageCount?: number | null
+}) {
   const [editing, setEditing] = useState(false)
   const update = useUpdateBook(book.id)
   const [title, setTitle] = useState(book.title)
@@ -148,16 +166,35 @@ function MetadataBlock({ book }: { book: import('../lib/database.types.ts').Book
   }
 
   if (!editing) {
+    const metaBits: string[] = []
+    if (book.published_year) metaBits.push(String(book.published_year))
+    if (pageCount != null) metaBits.push(`${pageCount} pages`)
+
     return (
-      <div className="min-w-0 space-y-1">
+      <div className="min-w-0 flex-1 space-y-2">
+        {book.series_name && (
+          <p className="text-xs text-slate-600">
+            {book.series_index != null && `#${book.series_index} of `}
+            <Link
+              to={`/series/${encodeURIComponent(book.series_name)}`}
+              className="text-slate-700 hover:text-teal-700 hover:underline"
+            >
+              {book.series_name}
+            </Link>
+          </p>
+        )}
+        <h1 className="font-serif text-2xl sm:text-3xl font-semibold text-slate-900 leading-tight">
+          {book.title}
+        </h1>
         <p className="text-sm text-slate-700">
+          By{' '}
           {book.authors.length > 0
             ? book.authors.map((a, i) => (
                 <span key={a}>
                   {i > 0 && ', '}
                   <Link
                     to={`/author/${encodeURIComponent(a)}`}
-                    className="text-teal-600 hover:text-teal-700 hover:underline"
+                    className="text-slate-900 font-medium hover:text-teal-700 hover:underline"
                   >
                     {a}
                   </Link>
@@ -165,24 +202,11 @@ function MetadataBlock({ book }: { book: import('../lib/database.types.ts').Book
               ))
             : 'Unknown author'}
         </p>
-        {book.published_year && (
-          <p className="text-xs text-slate-500">{book.published_year}</p>
-        )}
-        {book.series_name && (
-          <p className="text-xs text-slate-500">
-            <Link
-              to={`/series/${encodeURIComponent(book.series_name)}`}
-              className="text-teal-600 hover:text-teal-700 hover:underline"
-            >
-              {book.series_name}
-            </Link>
-            {book.series_index != null && ` · #${book.series_index}`}
-          </p>
-        )}
-        {book.genres.length > 0 && (
-          <p className="text-xs text-slate-500">
-            {book.genres.slice(0, 4).join(' · ')}
-          </p>
+        <div className="pt-1.5">
+          <ReadingStatusDropdown book={book} />
+        </div>
+        {metaBits.length > 0 && (
+          <p className="text-xs text-slate-500">{metaBits.join(' · ')}</p>
         )}
         <div className="pt-1">
           <StarRating
@@ -195,15 +219,10 @@ function MetadataBlock({ book }: { book: import('../lib/database.types.ts').Book
         <button
           type="button"
           onClick={() => setEditing(true)}
-          className="text-[11px] text-teal-600 hover:text-teal-700 inline-flex items-center gap-1 pt-1"
+          className="text-[11px] text-slate-500 hover:text-teal-700 hover:underline inline-flex items-center gap-1 pt-1"
         >
           <Pencil className="h-3 w-3" /> Edit details
         </button>
-        {book.description && (
-          <p className="mt-3 text-sm text-slate-700 leading-relaxed whitespace-pre-line">
-            {book.description}
-          </p>
-        )}
       </div>
     )
   }
@@ -284,6 +303,278 @@ function MetadataBlock({ book }: { book: import('../lib/database.types.ts').Book
       </div>
       {update.error && (
         <p className="text-xs text-rose-600">{update.error.message}</p>
+      )}
+    </div>
+  )
+}
+
+const STATUS_META: Record<
+  ReadingStatus,
+  { label: string; Icon: typeof BookMarked; bg: string; text: string }
+> = {
+  want_to_read: {
+    label: 'Want to Read',
+    Icon: BookMarked,
+    bg: 'bg-amber-400 hover:bg-amber-500',
+    text: 'text-amber-900',
+  },
+  reading: {
+    label: 'In Progress',
+    Icon: BookOpen,
+    bg: 'bg-sky-400 hover:bg-sky-500',
+    text: 'text-sky-900',
+  },
+  read: {
+    label: 'Read',
+    Icon: CheckCircle2,
+    bg: 'bg-emerald-500 hover:bg-emerald-600',
+    text: 'text-white',
+  },
+}
+
+function ReadingStatusDropdown({
+  book,
+}: {
+  book: import('../lib/database.types.ts').BookRow
+}) {
+  const [open, setOpen] = useState(false)
+  const update = useUpdateReadingStatus(book.id)
+  const current = book.reading_status ? STATUS_META[book.reading_status] : null
+
+  const choose = (status: ReadingStatus | null) => {
+    update.mutate(status)
+    setOpen(false)
+  }
+
+  return (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        disabled={update.isPending}
+        className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-sm font-semibold shadow-sm disabled:opacity-70 ${
+          current
+            ? `${current.bg} ${current.text}`
+            : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
+        }`}
+      >
+        {current ? (
+          <>
+            <current.Icon className="h-4 w-4" />
+            {current.label}
+          </>
+        ) : (
+          <>Set status</>
+        )}
+        <ChevronDown className="h-3.5 w-3.5" />
+      </button>
+
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-30"
+            onClick={() => setOpen(false)}
+            aria-hidden="true"
+          />
+          <div className="absolute left-0 top-full mt-1 z-40 w-52 rounded-xl border border-slate-200 bg-white shadow-xl p-1.5">
+            {(Object.keys(STATUS_META) as ReadingStatus[]).map((s) => {
+              const meta = STATUS_META[s]
+              const isCurrent = book.reading_status === s
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => choose(s)}
+                  className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-sm hover:bg-slate-50 ${
+                    isCurrent ? 'text-slate-900 font-semibold' : 'text-slate-700'
+                  }`}
+                >
+                  <meta.Icon className="h-4 w-4 text-slate-600" />
+                  {meta.label}
+                </button>
+              )
+            })}
+            {book.reading_status && (
+              <button
+                type="button"
+                onClick={() => choose(null)}
+                className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs text-slate-500 hover:bg-slate-50 border-t border-slate-100 mt-1"
+              >
+                Clear status
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function SeriesShelf({ book }: { book: import('../lib/database.types.ts').BookRow }) {
+  const { data: books = [] } = useBooks()
+  if (!book.series_name) return null
+  const others = books
+    .filter((b) => b.series_name === book.series_name && b.id !== book.id)
+    .sort(
+      (a, b) =>
+        (a.series_index ?? Number.MAX_SAFE_INTEGER) -
+        (b.series_index ?? Number.MAX_SAFE_INTEGER),
+    )
+  if (others.length === 0) return null
+
+  return (
+    <section className="mt-8">
+      <h2 className="text-sm font-medium text-slate-700 mb-2">
+        Series ·{' '}
+        <Link
+          to={`/series/${encodeURIComponent(book.series_name)}`}
+          className="text-slate-700 hover:text-teal-700 hover:underline"
+        >
+          {book.series_name}
+        </Link>
+      </h2>
+      <ShelfRow books={others} showSeriesIndex />
+    </section>
+  )
+}
+
+function MoreByAuthor({ book }: { book: import('../lib/database.types.ts').BookRow }) {
+  const { data: books = [] } = useBooks()
+  const primary = book.authors[0]
+  if (!primary) return null
+  const others = books
+    .filter(
+      (b) =>
+        b.id !== book.id &&
+        b.authors.includes(primary) &&
+        // Already shown in the series shelf — don't duplicate.
+        (!book.series_name || b.series_name !== book.series_name),
+    )
+    .sort((a, b) => a.title.localeCompare(b.title))
+  if (others.length === 0) return null
+
+  return (
+    <section className="mt-8">
+      <h2 className="text-sm font-medium text-slate-700 mb-2">
+        More by{' '}
+        <Link
+          to={`/author/${encodeURIComponent(primary)}`}
+          className="text-slate-700 hover:text-teal-700 hover:underline"
+        >
+          {primary}
+        </Link>
+      </h2>
+      <ShelfRow books={others} />
+    </section>
+  )
+}
+
+function ShelfRow({
+  books,
+  showSeriesIndex,
+}: {
+  books: import('../lib/database.types.ts').BookRow[]
+  showSeriesIndex?: boolean
+}) {
+  return (
+    <ul className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 snap-x">
+      {books.map((b) => (
+        <li key={b.id} className="w-24 sm:w-28 shrink-0 snap-start">
+          <Link to={`/book/${b.id}`} className="block group">
+            <div className="relative">
+              <Cover
+                path={b.cover_path}
+                title={b.title}
+                authors={b.authors}
+                version={b.updated_at}
+                className="aspect-[2/3] w-full rounded-md shadow-sm group-hover:shadow-md transition-shadow"
+              />
+              {showSeriesIndex && b.series_index != null && (
+                <span className="absolute bottom-1 right-1 inline-flex items-center px-1.5 py-0.5 rounded-md bg-amber-400 text-amber-900 text-[10px] font-bold shadow">
+                  #{b.series_index}
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-[11px] text-slate-700 leading-tight line-clamp-2">
+              {b.title}
+            </p>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function GenreChips({ book }: { book: import('../lib/database.types.ts').BookRow }) {
+  const update = useUpdateBook(book.id)
+  const [input, setInput] = useState('')
+  const [adding, setAdding] = useState(false)
+
+  const addGenre = () => {
+    const g = input.trim()
+    if (!g) {
+      setAdding(false)
+      return
+    }
+    if (book.genres.includes(g)) {
+      setInput('')
+      setAdding(false)
+      return
+    }
+    update.mutate({ genres: [...book.genres, g] })
+    setInput('')
+    setAdding(false)
+  }
+
+  const removeGenre = (g: string) => {
+    update.mutate({ genres: book.genres.filter((x) => x !== g) })
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {book.genres.map((g) => (
+        <span
+          key={g}
+          className="inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-700 text-xs pl-2.5 pr-1.5 py-1"
+        >
+          {g}
+          <button
+            type="button"
+            onClick={() => removeGenre(g)}
+            aria-label={`Remove genre ${g}`}
+            className="hover:bg-slate-200 rounded-full p-0.5"
+          >
+            <X className="h-2.5 w-2.5" />
+          </button>
+        </span>
+      ))}
+      {adding ? (
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onBlur={addGenre}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              addGenre()
+            } else if (e.key === 'Escape') {
+              setAdding(false)
+              setInput('')
+            }
+          }}
+          autoFocus
+          placeholder="new genre"
+          className="rounded-full border border-slate-200 px-2.5 py-1 text-xs w-24 focus:outline-none focus:border-teal-300"
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-slate-300 text-slate-500 hover:text-slate-700 hover:border-slate-400 text-xs px-2.5 py-1"
+        >
+          <Plus className="h-3 w-3" /> genre
+        </button>
       )}
     </div>
   )
@@ -512,26 +803,21 @@ function PillButton({
 // ============================================================
 
 function Editions({ editions, book }: { editions: EditionRow[]; book: import('../lib/database.types.ts').BookRow }) {
-  const [addOpen, setAddOpen] = useState(false)
-
   return (
     <section className="mt-6">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-sm font-medium text-slate-700">
           Editions ({editions.length})
         </h2>
-        {!addOpen && (
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-teal-500 hover:bg-teal-600 text-white"
-          >
-            <Plus className="h-3 w-3" /> Add edition
-          </button>
-        )}
+        <Link
+          to={`/add?attach=${book.id}`}
+          className="text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-teal-500 hover:bg-teal-600 text-white"
+        >
+          <Plus className="h-3 w-3" /> Add edition
+        </Link>
       </div>
 
-      {editions.length === 0 && !addOpen && (
+      {editions.length === 0 && (
         <p className="text-xs text-slate-500">
           No editions left. Add one to get started.
         </p>
@@ -546,10 +832,6 @@ function Editions({ editions, book }: { editions: EditionRow[]; book: import('..
           />
         ))}
       </ul>
-
-      {addOpen && (
-        <AddEditionForm bookId={book.id} onClose={() => setAddOpen(false)} />
-      )}
     </section>
   )
 }
@@ -564,7 +846,6 @@ function EditionCard({
   const del = useDeleteEdition()
   const setCover = useSetEditionCoverFromFile(edition.id, edition.book_id)
   const clearCover = useClearEditionCover(edition.id, edition.book_id)
-  const setTrophy = useUpdateEditionTrophy(edition.id, edition.book_id)
   const fileInputId = `edition-cover-${edition.id}`
 
   // Edition cover wins; otherwise fall back to the book cover; failing
@@ -586,7 +867,14 @@ function EditionCard({
         />
         <div className="flex-1 min-w-0 space-y-1.5">
           <div className="flex items-start justify-between gap-2">
-            <FormatBadge format={edition.format} />
+            <div className="flex flex-wrap items-center gap-1.5">
+              <FormatBadge format={edition.format} />
+              {edition.is_preorder && (
+                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                  Pre-order
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2">
               {edition.isbn && (
                 <span className="text-xs font-mono text-slate-500">
@@ -608,19 +896,12 @@ function EditionCard({
               </button>
             </div>
           </div>
+          {edition.display_name && (
+            <p className="text-sm font-medium text-slate-800">
+              {edition.display_name}
+            </p>
+          )}
           <EditionMeta edition={edition} />
-          <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer pt-1">
-            <input
-              type="checkbox"
-              checked={edition.is_trophy}
-              onChange={(e) => setTrophy.mutate(e.target.checked)}
-              disabled={setTrophy.isPending}
-              className="accent-teal-500"
-            />
-            <Trophy className="h-3 w-3 text-amber-500" />
-            Trophy book (no dates needed)
-          </label>
-          {!edition.is_trophy && <ReadingDates edition={edition} />}
           <div className="flex items-center gap-2 pt-1">
             <label
               htmlFor={fileInputId}
@@ -669,306 +950,6 @@ function EditionCard({
         </div>
       </div>
     </li>
-  )
-}
-
-function ReadingDates({ edition }: { edition: EditionRow }) {
-  const update = useUpdateEditionDates(edition.id, edition.book_id)
-  const [started, setStarted] = useState(edition.started_at ?? '')
-  const [finished, setFinished] = useState(edition.finished_at ?? '')
-  const isAudio = edition.format === 'audiobook'
-  const startLabel = isAudio ? 'Started listening' : 'Started'
-  const finishLabel = isAudio ? 'Finished listening' : 'Finished'
-
-  // Save on blur so the user doesn't see a save button per field.
-  const save = () => {
-    const next = {
-      started_at: started || null,
-      finished_at: finished || null,
-    }
-    if (
-      next.started_at === edition.started_at &&
-      next.finished_at === edition.finished_at
-    ) {
-      return
-    }
-    update.mutate(next)
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-2 pt-1">
-      <label className="inline-flex items-center gap-1 text-[11px] text-slate-500">
-        {startLabel}
-        <input
-          type="date"
-          value={started}
-          onChange={(e) => setStarted(e.target.value)}
-          onBlur={save}
-          className="rounded-md border border-slate-200 px-1.5 py-0.5 text-[11px]"
-        />
-      </label>
-      <label className="inline-flex items-center gap-1 text-[11px] text-slate-500">
-        {finishLabel}
-        <input
-          type="date"
-          value={finished}
-          onChange={(e) => setFinished(e.target.value)}
-          onBlur={save}
-          className="rounded-md border border-slate-200 px-1.5 py-0.5 text-[11px]"
-        />
-      </label>
-      {update.error && (
-        <span className="text-[10px] text-rose-600">{update.error.message}</span>
-      )}
-    </div>
-  )
-}
-
-// ----- Add edition inline form -----
-
-const addEditionSchema = z.object({
-  format: z.enum([
-    'paperback',
-    'hardcover',
-    'ebook',
-    'audiobook',
-    'special_edition',
-    'other',
-  ]),
-  isbn: z.string(),
-  publisher: z.string(),
-  publishedYear: z.string(),
-  pageCount: z.string(),
-  isTrophy: z.boolean(),
-  startedAt: z.string(),
-  finishedAt: z.string(),
-  purchaseDate: z.string(),
-  purchaseLocation: z.string(),
-  purchasePrice: z.string(),
-  condition: z.string(),
-})
-type AddEditionFormValues = z.infer<typeof addEditionSchema>
-
-function AddEditionForm({
-  bookId,
-  onClose,
-}: {
-  bookId: string
-  onClose: () => void
-}) {
-  const add = useAddEdition()
-  const form = useForm<AddEditionFormValues>({
-    resolver: zodResolver(addEditionSchema),
-    defaultValues: {
-      format: 'paperback',
-      isbn: '',
-      publisher: '',
-      publishedYear: '',
-      pageCount: '',
-      isTrophy: false,
-      startedAt: '',
-      finishedAt: '',
-      purchaseDate: '',
-      purchaseLocation: '',
-      purchasePrice: '',
-      condition: '',
-    },
-  })
-
-  const onSubmit = async (v: AddEditionFormValues) => {
-    const priceTrim = v.purchasePrice.trim()
-    const yearTrim = v.publishedYear.trim()
-    const pagesTrim = v.pageCount.trim()
-    await add.mutateAsync({
-      bookId,
-      format: v.format as Format,
-      isbn: v.isbn.trim() || null,
-      publisher: v.publisher.trim() || null,
-      publicationYear:
-        yearTrim === '' ? null : Number.isFinite(Number(yearTrim)) ? Number(yearTrim) : null,
-      pageCount:
-        pagesTrim === '' ? null : Number.isFinite(Number(pagesTrim)) ? Number(pagesTrim) : null,
-      durationSeconds: null,
-      purchaseDate: v.purchaseDate || null,
-      purchaseLocation: v.purchaseLocation.trim() || null,
-      purchasePrice:
-        priceTrim === '' ? null : Number.isFinite(Number(priceTrim)) ? Number(priceTrim) : null,
-      condition: (v.condition || null) as Condition | null,
-      startedAt: v.isTrophy ? null : v.startedAt || null,
-      finishedAt: v.isTrophy ? null : v.finishedAt || null,
-      isTrophy: v.isTrophy,
-    })
-    onClose()
-  }
-
-  const isTrophyChecked = form.watch('isTrophy')
-  const formatChosen = form.watch('format')
-  const audioInForm = formatChosen === 'audiobook'
-
-  return (
-    <form
-      onSubmit={form.handleSubmit(onSubmit)}
-      className="mt-3 rounded-md border border-slate-200 bg-white p-3 space-y-2"
-    >
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-slate-700">New edition</h3>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Cancel"
-          className="p-1 text-slate-400 hover:text-slate-700"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      <label className="block">
-        <span className="block text-xs text-slate-600 mb-1">Format</span>
-        <select
-          {...form.register('format')}
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm bg-white"
-        >
-          <option value="paperback">Paperback</option>
-          <option value="hardcover">Hardcover</option>
-          <option value="ebook">eBook</option>
-          <option value="audiobook">Audiobook</option>
-          <option value="special_edition">Special edition</option>
-          <option value="other">Other</option>
-        </select>
-      </label>
-
-      <div className="grid grid-cols-2 gap-2">
-        <label className="block">
-          <span className="block text-xs text-slate-600 mb-1">ISBN</span>
-          <input
-            type="text"
-            inputMode="numeric"
-            placeholder="978…"
-            {...form.register('isbn')}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          />
-        </label>
-        <label className="block">
-          <span className="block text-xs text-slate-600 mb-1">Pages</span>
-          <input
-            type="number"
-            min="0"
-            {...form.register('pageCount')}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          />
-        </label>
-      </div>
-
-      <label className="block">
-        <span className="block text-xs text-slate-600 mb-1">Published year</span>
-        <input
-          type="number"
-          min="0"
-          max="9999"
-          {...form.register('publishedYear')}
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-        />
-      </label>
-
-      <label className="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-        <input
-          type="checkbox"
-          {...form.register('isTrophy')}
-          className="accent-teal-500"
-        />
-        <Trophy className="h-3.5 w-3.5 text-amber-500" />
-        Trophy book — skip dates
-      </label>
-
-      {!isTrophyChecked && (
-        <div className="grid grid-cols-2 gap-2">
-          <label className="block">
-            <span className="block text-xs text-slate-600 mb-1">
-              {audioInForm ? 'Started listening' : 'Started'}
-            </span>
-            <input
-              type="date"
-              {...form.register('startedAt')}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="block text-xs text-slate-600 mb-1">
-              {audioInForm ? 'Finished listening' : 'Finished'}
-            </span>
-            <input
-              type="date"
-              {...form.register('finishedAt')}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-          </label>
-        </div>
-      )}
-
-      <details className="rounded-md border border-slate-200 bg-white">
-        <summary className="cursor-pointer px-3 py-2 text-sm text-slate-700">
-          Purchase details (optional)
-        </summary>
-        <div className="p-3 pt-0 space-y-2">
-          <div className="grid grid-cols-2 gap-2">
-            <label className="block">
-              <span className="block text-xs text-slate-600 mb-1">Purchased on</span>
-              <input
-                type="date"
-                {...form.register('purchaseDate')}
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-            <label className="block">
-              <span className="block text-xs text-slate-600 mb-1">Price</span>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="0.00"
-                {...form.register('purchasePrice')}
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-          </div>
-          <label className="block">
-            <span className="block text-xs text-slate-600 mb-1">Where</span>
-            <input
-              type="text"
-              placeholder="e.g. op-shop"
-              {...form.register('purchaseLocation')}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="block text-xs text-slate-600 mb-1">Condition</span>
-            <select
-              {...form.register('condition')}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm bg-white"
-            >
-              <option value="">Not set</option>
-              <option value="new">New</option>
-              <option value="second_hand">Second hand</option>
-              <option value="unknown">Unknown</option>
-            </select>
-          </label>
-        </div>
-      </details>
-
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={add.isPending}
-          className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full bg-teal-500 hover:bg-teal-600 px-4 py-2 text-sm text-white disabled:opacity-60"
-        >
-          <Plus className="h-4 w-4" />
-          {add.isPending ? 'Adding…' : 'Add edition'}
-        </button>
-      </div>
-      {add.error && (
-        <p className="text-xs text-rose-600">{add.error.message}</p>
-      )}
-    </form>
   )
 }
 

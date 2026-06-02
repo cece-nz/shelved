@@ -10,6 +10,7 @@ import {
   BookMarked,
   Layers,
   Trash2,
+  Filter,
 } from 'lucide-react'
 import { useBooks, useDeleteBook } from '../queries/books.ts'
 import {
@@ -19,6 +20,7 @@ import {
 import { useTbrTopBookIds } from '../queries/lists.ts'
 import { Cover } from '../components/Cover.tsx'
 import { FORMAT_META } from '../components/FormatBadge.tsx'
+import { StarRating } from '../components/StarRating.tsx'
 import type { BookRow, Format } from '../lib/database.types.ts'
 
 type SortKey =
@@ -101,22 +103,6 @@ export function Bookcase() {
         )}
       </header>
 
-      {allTags.length > 0 && (
-        <TagFilterRow
-          tags={allTags}
-          active={activeTags}
-          onToggle={(tag) =>
-            setActiveTags((prev) => {
-              const next = new Set(prev)
-              if (next.has(tag)) next.delete(tag)
-              else next.add(tag)
-              return next
-            })
-          }
-          onClear={() => setActiveTags(new Set())}
-        />
-      )}
-
       {books.length > 0 && (
         <div className="mb-5 flex flex-col sm:flex-row gap-2">
           <div className="flex-1 relative">
@@ -140,18 +126,35 @@ export function Bookcase() {
               </button>
             )}
           </div>
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as SortKey)}
-            aria-label="Sort books"
-            className="px-4 py-2.5 rounded-full border border-slate-200 bg-white text-slate-700 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-300"
-          >
-            <option value="added">Recently added</option>
-            <option value="title">Title (A–Z)</option>
-            <option value="author">Author (A–Z)</option>
-            <option value="group_author">Group by author</option>
-            <option value="group_series">Group by series</option>
-          </select>
+          <div className="flex gap-2">
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortKey)}
+              aria-label="Sort books"
+              className="px-4 py-2.5 rounded-full border border-slate-200 bg-white text-slate-700 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-300"
+            >
+              <option value="added">Recently added</option>
+              <option value="title">Title (A–Z)</option>
+              <option value="author">Author (A–Z)</option>
+              <option value="group_author">Group by author</option>
+              <option value="group_series">Group by series</option>
+            </select>
+            {allTags.length > 0 && (
+              <TagFilterPopover
+                tags={allTags}
+                active={activeTags}
+                onToggle={(tag) =>
+                  setActiveTags((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(tag)) next.delete(tag)
+                    else next.add(tag)
+                    return next
+                  })
+                }
+                onClear={() => setActiveTags(new Set())}
+              />
+            )}
+          </div>
         </div>
       )}
 
@@ -187,7 +190,7 @@ export function Bookcase() {
 
       {/* Flat view (Recently added / Title / Author) — individual cards */}
       {!isGrouped && filtered.length > 0 && (
-        <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-x-4 gap-y-8">
+        <ul className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-x-3 gap-y-7">
           {filtered.map((book) => (
             <li key={book.id}>
               <BookcaseCard
@@ -206,7 +209,7 @@ export function Bookcase() {
 
       {/* Grouped view (by author / by series) — stacks with modal popout */}
       {clusters && clusters.length > 0 && (
-        <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-x-4 gap-y-8">
+        <ul className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-x-3 gap-y-7">
           {clusters.map((item) =>
             item.kind === 'single' ? (
               <li key={item.key}>
@@ -447,7 +450,7 @@ function ClusterModal({
   )
 }
 
-function TagFilterRow({
+function TagFilterPopover({
   tags,
   active,
   onToggle,
@@ -458,36 +461,66 @@ function TagFilterRow({
   onToggle: (tag: string) => void
   onClear: () => void
 }) {
+  const [open, setOpen] = useState(false)
   return (
-    <div className="mb-4 -mx-1 flex flex-wrap items-center gap-1.5">
-      {tags.map(([tag, count]) => {
-        const isActive = active.has(tag)
-        return (
-          <button
-            key={tag}
-            type="button"
-            onClick={() => onToggle(tag)}
-            className={`text-xs rounded-full px-2.5 py-1 transition-colors ${
-              isActive
-                ? 'bg-teal-500 text-white'
-                : 'bg-white border border-slate-200 text-slate-700 hover:border-slate-300'
-            }`}
-          >
-            {tag}
-            <span className={`ml-1 text-[10px] ${isActive ? 'opacity-80' : 'text-slate-400'}`}>
-              {count}
-            </span>
-          </button>
-        )
-      })}
-      {active.size > 0 && (
-        <button
-          type="button"
-          onClick={onClear}
-          className="text-xs text-slate-500 hover:text-slate-700 underline ml-1"
-        >
-          clear
-        </button>
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Filter by tag"
+        className={`inline-flex items-center gap-1.5 px-4 py-2.5 rounded-full border text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-300 ${
+          active.size > 0
+            ? 'bg-teal-500 text-white border-teal-500'
+            : 'bg-white text-slate-700 border-slate-200'
+        }`}
+      >
+        <Filter className="h-4 w-4" />
+        {active.size > 0 && <span>{active.size}</span>}
+      </button>
+
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-30"
+            onClick={() => setOpen(false)}
+            aria-hidden="true"
+          />
+          <div className="absolute right-0 top-full mt-1 z-40 w-56 rounded-xl border border-slate-200 bg-white shadow-xl p-2">
+            <div className="flex items-center justify-between px-2 py-1 mb-1">
+              <p className="text-xs font-semibold text-slate-700">Tags</p>
+              {active.size > 0 && (
+                <button
+                  type="button"
+                  onClick={onClear}
+                  className="text-[11px] text-teal-600 hover:text-teal-700"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
+            <ul className="max-h-72 overflow-y-auto">
+              {tags.map(([tag, count]) => {
+                const isActive = active.has(tag)
+                return (
+                  <li key={tag}>
+                    <label className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 cursor-pointer">
+                      <span className="flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={isActive}
+                          onChange={() => onToggle(tag)}
+                          className="accent-teal-500"
+                        />
+                        {tag}
+                      </span>
+                      <span className="text-[10px] text-slate-400">{count}</span>
+                    </label>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        </>
       )}
     </div>
   )
@@ -576,14 +609,16 @@ function BookcaseCard({
   const navigate = useNavigate()
   const formats = summary?.formats ?? new Set<Format>()
 
-  // Status icon precedence: TBR top > Reading > Read > none.
+  // Status icon precedence: TBR top > book-level reading status.
   const statusIcon = onTbrTop
     ? { Icon: BookMarked, color: 'bg-amber-500', label: 'On TBR top' }
-    : summary?.status === 'reading'
-      ? { Icon: BookOpen, color: 'bg-sky-500', label: 'Currently reading' }
-      : summary?.status === 'read'
+    : book.reading_status === 'reading'
+      ? { Icon: BookOpen, color: 'bg-sky-500', label: 'In progress' }
+      : book.reading_status === 'read'
         ? { Icon: CheckCircle2, color: 'bg-emerald-500', label: 'Read' }
-        : null
+        : book.reading_status === 'want_to_read'
+          ? { Icon: BookMarked, color: 'bg-amber-400', label: 'Want to read' }
+          : null
 
   const timerRef = useRef<number | null>(null)
   const triggeredRef = useRef(false)
@@ -670,7 +705,7 @@ function BookcaseCard({
           {book.authors.join(', ') || 'Unknown author'}
         </p>
         {formats.size > 0 && (
-          <div className="flex items-center gap-1.5 mt-1.5 text-slate-400">
+          <div className="flex items-center gap-1.5 mt-1.5 text-teal-600">
             {[...formats].map((fmt) => {
               const meta = FORMAT_META[fmt] ?? FORMAT_META.other
               const Icon = meta.Icon
@@ -682,6 +717,11 @@ function BookcaseCard({
                 />
               )
             })}
+          </div>
+        )}
+        {book.rating != null && (
+          <div className="mt-1">
+            <StarRating value={book.rating} size="sm" />
           </div>
         )}
       </div>

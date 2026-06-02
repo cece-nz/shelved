@@ -35,6 +35,9 @@ export type NewEditionInput = {
   startedAt: string | null
   finishedAt: string | null
   isTrophy: boolean
+  storeId: string | null
+  isPreorder: boolean
+  displayName: string | null
 }
 
 /** Add a new edition under an existing book. */
@@ -64,6 +67,9 @@ export function useAddEdition() {
           started_at: input.startedAt,
           finished_at: input.finishedAt,
           is_trophy: input.isTrophy,
+          store_id: input.storeId,
+          is_preorder: input.isPreorder,
+          display_name: input.displayName,
         })
         .select()
         .single()

@@ -8,6 +8,7 @@ import {
   Heart,
   LogOut,
   X,
+  Store,
 } from 'lucide-react'
 import { useAuth } from '../auth/AuthProvider.tsx'
 import { supabase } from '../lib/supabase.ts'
@@ -16,6 +17,7 @@ const navItems = [
   { to: '/', label: 'Home', icon: BookOpen, end: true },
   { to: '/tbr', label: 'TBR', icon: BookMarked, end: false },
   { to: '/wishlist', label: 'Wishlist', icon: Heart, end: false },
+  { to: '/stores', label: 'Stores', icon: Store, end: false },
   { to: '/add', label: 'Add a book', icon: Plus, end: false },
 ]
 

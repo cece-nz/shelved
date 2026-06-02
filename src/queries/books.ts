@@ -3,7 +3,12 @@ import { supabase } from '../lib/supabase.ts'
 import { downloadAndStoreCover, uploadCoverFile } from '../lib/storage.ts'
 import { useAuth } from '../auth/AuthProvider.tsx'
 import type { IsbnLookupResult } from '../lib/openLibrary.ts'
-import type { BookRow, Condition, Format } from '../lib/database.types.ts'
+import type {
+  BookRow,
+  Condition,
+  Format,
+  ReadingStatus,
+} from '../lib/database.types.ts'
 
 export const booksKey = ['books'] as const
 export const bookKey = (id: string) => ['books', id] as const
@@ -67,6 +72,9 @@ export type EditionInput = {
   purchaseLocation: string | null
   purchasePrice: number | null
   condition: Condition | null
+  displayName: string | null
+  isPreorder: boolean
+  storeId: string | null
 }
 
 export type AddBookInput = {
@@ -149,6 +157,9 @@ export function useAddBookFromIsbn() {
         purchase_location: edition.purchaseLocation,
         purchase_price: edition.purchasePrice,
         condition: edition.condition,
+        display_name: edition.displayName,
+        is_preorder: edition.isPreorder,
+        store_id: edition.storeId,
       })
       if (editionErr) {
         if (createdNew) {
@@ -259,6 +270,63 @@ export type BookMetadataUpdate = {
   series_name?: string | null
   series_index?: number | null
   rating?: number | null
+}
+
+/**
+ * Set a book's reading status and keep TBR list-items in sync.
+ *
+ * 'want_to_read' → ensure the book is on the TBR pool (if not already
+ *                  on top). All other statuses → remove from TBR.
+ *
+ * We don't touch edition.started_at / finished_at — those will become
+ * a v2 "log a reading session" feature.
+ */
+export function useUpdateReadingStatus(bookId: string) {
+  const qc = useQueryClient()
+  const { session } = useAuth()
+  return useMutation({
+    mutationFn: async (status: ReadingStatus | null) => {
+      if (!session) throw new Error('Not signed in')
+      const userId = session.user.id
+
+      const { error: updErr } = await supabase
+        .from('books')
+        .update({ reading_status: status })
+        .eq('id', bookId)
+      if (updErr) throw updErr
+
+      if (status === 'want_to_read') {
+        const { data: existing } = await supabase
+          .from('list_items')
+          .select('id, list_kind')
+          .eq('book_id', bookId)
+          .in('list_kind', ['tbr_top', 'tbr_pool'])
+          .maybeSingle()
+        if (!existing) {
+          const { error } = await supabase.from('list_items').insert({
+            user_id: userId,
+            book_id: bookId,
+            list_kind: 'tbr_pool',
+          })
+          if (error) throw error
+        }
+      } else {
+        const { error } = await supabase
+          .from('list_items')
+          .delete()
+          .eq('book_id', bookId)
+          .in('list_kind', ['tbr_top', 'tbr_pool'])
+        if (error) throw error
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: bookKey(bookId) })
+      qc.invalidateQueries({ queryKey: booksKey })
+      qc.invalidateQueries({ queryKey: ['lists', 'tbr'] })
+      qc.invalidateQueries({ queryKey: ['lists', 'tbr_top_ids'] })
+      qc.invalidateQueries({ queryKey: ['list_items', 'book', bookId] })
+    },
+  })
 }
 
 /** Edit book metadata (title, author, publisher, etc.) in place. */
@@ -383,6 +451,9 @@ export function useAddBookManually() {
         purchase_location: input.edition.purchaseLocation,
         purchase_price: input.edition.purchasePrice,
         condition: input.edition.condition,
+        display_name: input.edition.displayName,
+        is_preorder: input.edition.isPreorder,
+        store_id: input.edition.storeId,
       })
       if (editionErr) {
         await supabase.from('books').delete().eq('id', book.id)

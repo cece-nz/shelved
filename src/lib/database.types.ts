@@ -14,6 +14,8 @@ export type Condition = 'new' | 'second_hand' | 'unknown'
 
 export type ListKind = 'tbr_top' | 'tbr_pool' | 'wishlist'
 
+export type ReadingStatus = 'want_to_read' | 'reading' | 'read'
+
 type Timestamps = {
   created_at: string
   updated_at: string
@@ -34,6 +36,7 @@ export type BookRow = Timestamps & {
   openlibrary_work_id: string | null
   series_name: string | null
   series_index: number | null
+  reading_status: ReadingStatus | null
 }
 
 export type EditionRow = Timestamps & {
@@ -56,6 +59,17 @@ export type EditionRow = Timestamps & {
   started_at: string | null
   finished_at: string | null
   is_trophy: boolean
+  store_id: string | null
+  is_preorder: boolean
+  display_name: string | null
+}
+
+export type StoreRow = Timestamps & {
+  id: string
+  user_id: string
+  name: string
+  location: string | null
+  notes: string | null
 }
 
 export type ReadingSessionRow = {
@@ -128,6 +142,7 @@ export type Database = {
       quotes: TableShape<QuoteRow>
       bookmarks: TableShape<BookmarkRow>
       list_items: TableShape<ListItemRow>
+      stores: TableShape<StoreRow>
     }
     Views: Record<string, never>
     Functions: Record<string, never>

@@ -31,6 +31,7 @@ create table books (
   tags text[] not null default '{}',
   cover_path text,
   rating numeric(2, 1) check (rating is null or (rating >= 0 and rating <= 5)),
+  reading_status text check (reading_status is null or reading_status in ('want_to_read', 'reading', 'read')),
   openlibrary_work_id text,
   series_name text,
   series_index numeric(5, 2),

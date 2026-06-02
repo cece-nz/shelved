@@ -9,6 +9,8 @@ import { AddBook } from './routes/AddBook.tsx'
 import { BookDetail } from './routes/BookDetail.tsx'
 import { AuthorPage } from './routes/AuthorPage.tsx'
 import { SeriesPage } from './routes/SeriesPage.tsx'
+import { Stores } from './routes/Stores.tsx'
+import { StoreDetail } from './routes/StoreDetail.tsx'
 import { NotFound } from './routes/NotFound.tsx'
 
 function App() {
@@ -34,6 +36,8 @@ function App() {
         <Route path="book/:id" element={<BookDetail />} />
         <Route path="author/:name" element={<AuthorPage />} />
         <Route path="series/:name" element={<SeriesPage />} />
+        <Route path="stores" element={<Stores />} />
+        <Route path="stores/:id" element={<StoreDetail />} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
