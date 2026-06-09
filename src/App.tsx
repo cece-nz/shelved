@@ -6,6 +6,7 @@ import { Bookcase } from './routes/Bookcase.tsx'
 import { TBR } from './routes/TBR.tsx'
 import { Wishlist } from './routes/Wishlist.tsx'
 import { AddBook } from './routes/AddBook.tsx'
+import { BulkAdd } from './routes/BulkAdd.tsx'
 import { BookDetail } from './routes/BookDetail.tsx'
 import { AuthorPage } from './routes/AuthorPage.tsx'
 import { SeriesPage } from './routes/SeriesPage.tsx'
@@ -33,6 +34,7 @@ function App() {
         <Route path="tbr" element={<TBR />} />
         <Route path="wishlist" element={<Wishlist />} />
         <Route path="add" element={<AddBook />} />
+        <Route path="add/bulk" element={<BulkAdd />} />
         <Route path="book/:id" element={<BookDetail />} />
         <Route path="author/:name" element={<AuthorPage />} />
         <Route path="series/:name" element={<SeriesPage />} />

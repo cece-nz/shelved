@@ -6,4 +6,6 @@
 -- still count the book as "read" for status displays.
 
 alter table editions
-  add column is_trophy boolean not null default false;
+  add column if not exists is_trophy boolean not null default false;
+
+notify pgrst, 'reload schema';

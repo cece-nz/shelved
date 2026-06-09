@@ -9,7 +9,7 @@
 -- a "separate book" entry for the same work (intentional duplicate). The
 -- dedup default lives in app code; the database stays permissive.
 
-alter table books add column openlibrary_work_id text;
+alter table books add column if not exists openlibrary_work_id text;
 
 -- Partial index: only books that have a work ID are useful to look up
 -- by it. Saves space and write overhead on manually-added books with no

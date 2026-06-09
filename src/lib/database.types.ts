@@ -11,6 +11,7 @@ export type Format =
   | 'other'
 
 export type Condition = 'new' | 'second_hand' | 'unknown'
+export type Acquired = 'library' | 'purchased' | 'unknown'
 
 export type ListKind = 'tbr_top' | 'tbr_pool' | 'wishlist'
 
@@ -29,8 +30,10 @@ export type BookRow = Timestamps & {
   publisher: string | null
   published_year: number | null
   description: string | null
-  genres: string[]
-  tags: string[]
+  reading_age: string | null
+  genre: string | null
+  sub_genre: string | null
+  mood: string | null
   cover_path: string | null
   rating: number | null
   openlibrary_work_id: string | null
@@ -54,6 +57,7 @@ export type EditionRow = Timestamps & {
   purchase_price: number | null
   currency: string | null
   condition: Condition | null
+  acquired: Acquired
   notes: string | null
   cover_path: string | null
   started_at: string | null

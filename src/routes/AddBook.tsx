@@ -1,30 +1,43 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useForm, type UseFormRegister, type FieldValues, type Path } from 'react-hook-form'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import {
+  useForm,
+  type UseFormRegister,
+  type UseFormSetValue,
+  type FieldValues,
+  type Path,
+  type PathValue,
+} from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation } from '@tanstack/react-query'
 import { z } from 'zod'
-import { Search, BookPlus, Camera, BookCheck, Info, X, Plus } from 'lucide-react'
+import { Search, BookPlus, Camera, BookCheck, Info, X } from 'lucide-react'
 import {
   IsbnNotFoundError,
   lookupByIsbn,
   looksLikeIsbn,
+  normalizeIsbn,
   searchByTitle,
   type IsbnLookupResult,
   type TitleSearchResult,
 } from '../lib/openLibrary.ts'
+import { LoadingButton } from '../components/LoadingButton.tsx'
+import { PastDateInput } from '../components/PastDateInput.tsx'
+import { FacetSelect } from '../components/FacetSelect.tsx'
+import { AutofillInput } from '../components/AutofillInput.tsx'
 import {
   useAddBookFromIsbn,
   useAddBookManually,
   useBook,
   useBooks,
   useBookByWorkId,
+  useBookFacetValues,
   type EditionInput,
   type ManualBookInput,
 } from '../queries/books.ts'
 import { useAddEdition } from '../queries/editions.ts'
-import { useStores, useAddStore } from '../queries/stores.ts'
-import type { BookRow, Condition, Format } from '../lib/database.types.ts'
+import { useStores } from '../queries/stores.ts'
+import type { Acquired, BookRow, Condition, Format } from '../lib/database.types.ts'
 import { BarcodeScanner } from '../components/BarcodeScanner.tsx'
 import { Cover } from '../components/Cover.tsx'
 
@@ -47,10 +60,18 @@ export function AddBook() {
     <>
       <title>Add a book · Shelved</title>
 
-      <header className="mb-4">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-          Add a book
-        </h1>
+      <header className="mb-4 min-w-0">
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            Add a book
+          </h1>
+          <Link
+            to="/add/bulk"
+            className="shrink-0 text-xs text-teal-600 hover:text-teal-700 font-medium underline"
+          >
+            Bulk add
+          </Link>
+        </div>
       </header>
 
       <div
@@ -101,6 +122,8 @@ const editionSchema = z.object({
   format: z.enum(FORMATS),
   displayName: z.string(),
   isbn: z.string(),
+  isPurchased: z.boolean(),
+  isLibrary: z.boolean(),
   isPreorder: z.boolean(),
   storeId: z.string(),
   purchaseDate: z.string(),
@@ -111,15 +134,123 @@ const editionSchema = z.object({
 type EditionFormValues = z.infer<typeof editionSchema>
 
 const emptyEditionDefaults: EditionFormValues = {
-  format: 'paperback',
+  format: 'ebook',
   displayName: '',
   isbn: '',
+  isPurchased: false,
+  isLibrary: false,
   isPreorder: false,
   storeId: '',
   purchaseDate: '',
   purchaseLocation: '',
   purchasePrice: '',
   condition: '',
+}
+
+/** Library / Purchased / Not set — derived from the two checkboxes. */
+function deriveAcquired(v: { isPurchased: boolean; isLibrary: boolean }): Acquired {
+  if (v.isPurchased) return 'purchased'
+  if (v.isLibrary) return 'library'
+  return 'unknown'
+}
+
+/** Book-level classification pickers (Reading age / Genre / Sub genre / Mood). */
+function FacetFieldset({
+  facets,
+  readingAge,
+  setReadingAge,
+  genre,
+  setGenre,
+  subGenre,
+  setSubGenre,
+  mood,
+  setMood,
+}: {
+  facets: ReturnType<typeof useBookFacetValues>
+  readingAge: string
+  setReadingAge: (v: string) => void
+  genre: string
+  setGenre: (v: string) => void
+  subGenre: string
+  setSubGenre: (v: string) => void
+  mood: string
+  setMood: (v: string) => void
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <FieldRow label="Reading age">
+          <FacetSelect
+            value={readingAge}
+            onChange={setReadingAge}
+            options={facets.readingAges}
+          />
+        </FieldRow>
+        <FieldRow label="Mood">
+          <FacetSelect value={mood} onChange={setMood} options={facets.moods} />
+        </FieldRow>
+      </div>
+      <FieldRow label="Genre">
+        <FacetSelect
+          value={genre}
+          onChange={(v) => {
+            setGenre(v)
+            setSubGenre('')
+          }}
+          options={facets.genres}
+        />
+      </FieldRow>
+      <FieldRow label="Sub genre">
+        <FacetSelect
+          value={subGenre}
+          onChange={setSubGenre}
+          options={facets.subGenresFor(genre || null)}
+          disabled={!genre}
+          placeholder={genre ? 'Not set' : 'Pick a genre first'}
+        />
+      </FieldRow>
+    </div>
+  )
+}
+
+/** Series name (with suggestions) + number. */
+function SeriesFields({
+  options,
+  name,
+  setName,
+  index,
+  setIndex,
+}: {
+  options: string[]
+  name: string
+  setName: (v: string) => void
+  index: string
+  setIndex: (v: string) => void
+}) {
+  return (
+    <FieldRow label="Series" hint="Optional — name and number">
+      <div className="grid grid-cols-[1fr_5rem] gap-2">
+        <AutofillInput
+          options={options}
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Series name"
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+        />
+        <input
+          type="number"
+          step="0.5"
+          min="0"
+          value={index}
+          onChange={(e) => setIndex(e.target.value)}
+          placeholder="#"
+          aria-label="Series number"
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+        />
+      </div>
+    </FieldRow>
+  )
 }
 
 function priceToNull(raw: string): number | null {
@@ -130,15 +261,19 @@ function priceToNull(raw: string): number | null {
 }
 
 function toEditionInput(v: EditionFormValues): EditionInput {
+  const purchased = v.isPurchased
+  const isEbook = v.format === 'ebook'
   return {
     format: v.format as Format,
-    purchaseDate: v.purchaseDate || null,
-    purchaseLocation: v.purchaseLocation.trim() || null,
-    purchasePrice: priceToNull(v.purchasePrice),
-    condition: (v.condition || null) as Condition | null,
-    displayName: v.displayName.trim() || null,
-    isPreorder: v.isPreorder,
-    storeId: v.storeId || null,
+    purchaseDate: purchased ? v.purchaseDate || null : null,
+    purchaseLocation: purchased ? v.purchaseLocation.trim() || null : null,
+    purchasePrice: purchased ? priceToNull(v.purchasePrice) : null,
+    condition:
+      purchased && !isEbook ? ((v.condition || null) as Condition | null) : null,
+    displayName: isEbook ? null : v.displayName.trim() || null,
+    isPreorder: purchased ? v.isPreorder : false,
+    storeId: purchased ? v.storeId || null : null,
+    acquired: deriveAcquired(v),
   }
 }
 
@@ -185,9 +320,18 @@ function AddNewBookFlow() {
 
 function IsbnAddFlow() {
   const navigate = useNavigate()
+  const facets = useBookFacetValues()
   const [coverFailed, setCoverFailed] = useState(false)
   const [scannerOpen, setScannerOpen] = useState(false)
   const [forceSeparate, setForceSeparate] = useState(false)
+  const [coverFile, setCoverFile] = useState<File | null>(null)
+  const [coverUrl, setCoverUrl] = useState('')
+  const [readingAge, setReadingAge] = useState('')
+  const [genre, setGenre] = useState('')
+  const [subGenre, setSubGenre] = useState('')
+  const [mood, setMood] = useState('')
+  const [seriesName, setSeriesName] = useState('')
+  const [seriesIndex, setSeriesIndex] = useState('')
 
   const lookupMutation = useMutation({
     mutationFn: (isbn: string) => lookupByIsbn(isbn),
@@ -221,6 +365,8 @@ function IsbnAddFlow() {
   const onSubmit = ({ query }: LookupFormValues) => {
     const trimmed = query.trim()
     if (looksLikeIsbn(trimmed)) {
+      // Capture the searched ISBN so it prefills the edition field.
+      editionForm.setValue('isbn', normalizeIsbn(trimmed))
       searchMutation.reset()
       lookupMutation.mutate(trimmed)
     } else {
@@ -230,6 +376,7 @@ function IsbnAddFlow() {
   }
 
   const pickSearchResult = (result: TitleSearchResult) => {
+    editionForm.setValue('isbn', result.isbns[0] ?? '')
     searchMutation.reset()
     lookupMutation.mutate(result.isbns[0])
   }
@@ -240,6 +387,17 @@ function IsbnAddFlow() {
       lookup,
       edition: toEditionInput(values),
       existingBookId: willMerge ? existingBook!.id : undefined,
+      coverFile,
+      coverUrl: coverUrl.trim() || null,
+      readingAge: readingAge || null,
+      genre: genre || null,
+      subGenre: subGenre || null,
+      mood: mood || null,
+      seriesName: seriesName.trim() || null,
+      seriesIndex:
+        seriesIndex.trim() !== '' && Number.isFinite(Number(seriesIndex))
+          ? Number(seriesIndex)
+          : null,
     })
     navigate(`/book/${book.id}`)
   }
@@ -256,27 +414,26 @@ function IsbnAddFlow() {
             type="text"
             autoComplete="off"
             placeholder="9780141439518 or Pride and Prejudice"
-            className="flex-1 min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-300"
+            className="flex-1 min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-300"
             {...lookupForm.register('query')}
           />
           <button
             type="button"
             onClick={() => setScannerOpen(true)}
             aria-label="Scan barcode"
-            className="inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+            className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
           >
             <Camera className="h-4 w-4" />
           </button>
-          <button
+          <LoadingButton
             type="submit"
-            disabled={lookupMutation.isPending || searchMutation.isPending}
-            className="inline-flex items-center gap-1.5 rounded-md bg-teal-500 hover:bg-teal-600 px-4 py-2 text-sm text-white disabled:opacity-60"
+            pending={lookupMutation.isPending || searchMutation.isPending}
+            pendingLabel="…"
+            icon={Search}
+            className="shrink-0 rounded-md bg-teal-500 hover:bg-teal-600 px-3 sm:px-4 py-2 text-sm text-white"
           >
-            <Search className="h-4 w-4" />
-            <span className="hidden sm:inline">
-              {lookupMutation.isPending || searchMutation.isPending ? 'Searching…' : 'Search'}
-            </span>
-          </button>
+            Search
+          </LoadingButton>
         </div>
         {lookupForm.formState.errors.query && (
           <p className="text-xs text-rose-600 mt-1">{lookupForm.formState.errors.query.message}</p>
@@ -316,20 +473,53 @@ function IsbnAddFlow() {
           )}
 
           <form onSubmit={editionForm.handleSubmit(onSave)} className="space-y-3">
-            <EditionFieldset register={editionForm.register} watch={editionForm.watch} />
+            {!willMerge && (
+              <>
+                <SeriesFields
+                  options={facets.series}
+                  name={seriesName}
+                  setName={setSeriesName}
+                  index={seriesIndex}
+                  setIndex={setSeriesIndex}
+                />
+                <FacetFieldset
+                  facets={facets}
+                  readingAge={readingAge}
+                  setReadingAge={setReadingAge}
+                  genre={genre}
+                  setGenre={setGenre}
+                  subGenre={subGenre}
+                  setSubGenre={setSubGenre}
+                  mood={mood}
+                  setMood={setMood}
+                />
+              </>
+            )}
 
-            <button
+            <EditionFieldset
+              register={editionForm.register}
+              watch={editionForm.watch}
+              setValue={editionForm.setValue}
+            />
+
+            {!willMerge && (
+              <CoverUploadOptional
+                coverFile={coverFile}
+                onCoverFile={setCoverFile}
+                coverUrl={coverUrl}
+                onCoverUrl={setCoverUrl}
+              />
+            )}
+
+            <LoadingButton
               type="submit"
-              disabled={addBook.isPending}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-md bg-teal-500 hover:bg-teal-600 px-4 py-2 text-sm text-white disabled:opacity-60"
+              pending={addBook.isPending}
+              pendingLabel="Saving…"
+              icon={BookPlus}
+              className="w-full rounded-md bg-teal-500 hover:bg-teal-600 px-4 py-2 text-sm text-white"
             >
-              <BookPlus className="h-4 w-4" />
-              {addBook.isPending
-                ? 'Saving…'
-                : willMerge
-                  ? 'Add edition to existing book'
-                  : 'Add to library'}
-            </button>
+              {willMerge ? 'Add edition to existing book' : 'Add to library'}
+            </LoadingButton>
             {addBook.error && (
               <p className="text-xs text-rose-600">{addBook.error.message}</p>
             )}
@@ -342,9 +532,11 @@ function IsbnAddFlow() {
         onClose={() => setScannerOpen(false)}
         onDetected={(code) => {
           setScannerOpen(false)
-          lookupForm.setValue('query', code, { shouldValidate: true })
+          const isbn = normalizeIsbn(code)
+          lookupForm.setValue('query', isbn, { shouldValidate: true })
+          editionForm.setValue('isbn', isbn)
           searchMutation.reset()
-          lookupMutation.mutate(code)
+          lookupMutation.mutate(isbn)
         }}
       />
     </>
@@ -359,11 +551,18 @@ const manualSchema = z.object({
   title: z.string().min(1, 'Title is required'),
   authors: z.string().min(1, 'At least one author is required'),
   publishedYear: z.string(),
-  genres: z.string(),
+  series: z.string(),
+  seriesIndex: z.string(),
+  readingAge: z.string(),
+  genre: z.string(),
+  subGenre: z.string(),
+  mood: z.string(),
   description: z.string(),
   format: z.enum(FORMATS),
   isbn: z.string(),
   displayName: z.string(),
+  isPurchased: z.boolean(),
+  isLibrary: z.boolean(),
   isPreorder: z.boolean(),
   storeId: z.string(),
   purchaseDate: z.string(),
@@ -375,25 +574,37 @@ type ManualFormValues = z.infer<typeof manualSchema>
 
 function toManualInput(v: ManualFormValues): ManualBookInput {
   const authors = v.authors.split(',').map((s) => s.trim()).filter(Boolean)
-  const genres = v.genres.split(',').map((s) => s.trim()).filter(Boolean)
   const year = v.publishedYear.trim() === '' ? null : Number(v.publishedYear)
+  const seriesIdx = v.seriesIndex.trim() === '' ? null : Number(v.seriesIndex)
+  const purchased = v.isPurchased
+  const isEbook = v.format === 'ebook'
   return {
     title: v.title.trim(),
     authors,
     publisher: null,
     publishedYear: year !== null && Number.isFinite(year) ? year : null,
     description: v.description.trim() || null,
-    genres,
+    readingAge: v.readingAge.trim() || null,
+    genre: v.genre.trim() || null,
+    subGenre: v.subGenre.trim() || null,
+    mood: v.mood.trim() || null,
+    seriesName: v.series.trim() || null,
+    seriesIndex:
+      seriesIdx !== null && Number.isFinite(seriesIdx) ? seriesIdx : null,
     edition: {
       format: v.format as Format,
-      isbn: v.isbn.trim() || null,
-      purchaseDate: v.purchaseDate || null,
-      purchaseLocation: v.purchaseLocation.trim() || null,
-      purchasePrice: priceToNull(v.purchasePrice),
-      condition: (v.condition || null) as Condition | null,
-      displayName: v.displayName.trim() || null,
-      isPreorder: v.isPreorder,
-      storeId: v.storeId || null,
+      isbn: isEbook ? null : v.isbn.trim() || null,
+      purchaseDate: purchased ? v.purchaseDate || null : null,
+      purchaseLocation: purchased ? v.purchaseLocation.trim() || null : null,
+      purchasePrice: purchased ? priceToNull(v.purchasePrice) : null,
+      condition:
+        purchased && !isEbook
+          ? ((v.condition || null) as Condition | null)
+          : null,
+      displayName: isEbook ? null : v.displayName.trim() || null,
+      isPreorder: purchased ? v.isPreorder : false,
+      storeId: purchased ? v.storeId || null : null,
+      acquired: deriveAcquired(v),
     },
   }
 }
@@ -401,17 +612,27 @@ function toManualInput(v: ManualFormValues): ManualBookInput {
 function ManualAddFlow() {
   const navigate = useNavigate()
   const addManually = useAddBookManually()
+  const facets = useBookFacetValues()
+  const [coverFile, setCoverFile] = useState<File | null>(null)
+  const [coverUrl, setCoverUrl] = useState('')
   const form = useForm<ManualFormValues>({
     resolver: zodResolver(manualSchema),
     defaultValues: {
       title: '',
       authors: '',
       publishedYear: '',
-      genres: '',
+      series: '',
+      seriesIndex: '',
+      readingAge: '',
+      genre: '',
+      subGenre: '',
+      mood: '',
       description: '',
-      format: 'paperback',
+      format: 'ebook',
       isbn: '',
       displayName: '',
+      isPurchased: false,
+      isLibrary: false,
       isPreorder: false,
       storeId: '',
       purchaseDate: '',
@@ -422,16 +643,20 @@ function ManualAddFlow() {
   })
 
   const onSubmit = async (values: ManualFormValues) => {
-    const book = await addManually.mutateAsync(toManualInput(values))
+    const book = await addManually.mutateAsync({
+      ...toManualInput(values),
+      coverFile,
+      coverUrl: coverUrl.trim() || null,
+    })
     navigate(`/book/${book.id}`)
   }
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3" noValidate>
+    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3 min-w-0" noValidate>
       <FieldRow label="Title">
         <input
           type="text"
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
           {...form.register('title')}
         />
         {form.formState.errors.title && (
@@ -445,7 +670,7 @@ function ManualAddFlow() {
         <input
           type="text"
           placeholder="Jane Austen"
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
           {...form.register('authors')}
         />
         {form.formState.errors.authors && (
@@ -462,24 +687,35 @@ function ManualAddFlow() {
           min="0"
           max="9999"
           placeholder="2003"
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
           {...form.register('publishedYear')}
         />
       </FieldRow>
 
-      <FieldRow label="Genres" hint="Comma-separated">
-        <input
-          type="text"
-          placeholder="Fiction, Romance, Classics"
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          {...form.register('genres')}
-        />
-      </FieldRow>
+      <SeriesFields
+        options={facets.series}
+        name={form.watch('series')}
+        setName={(v) => form.setValue('series', v)}
+        index={form.watch('seriesIndex')}
+        setIndex={(v) => form.setValue('seriesIndex', v)}
+      />
+
+      <FacetFieldset
+        facets={facets}
+        readingAge={form.watch('readingAge')}
+        setReadingAge={(v) => form.setValue('readingAge', v)}
+        genre={form.watch('genre')}
+        setGenre={(v) => form.setValue('genre', v)}
+        subGenre={form.watch('subGenre')}
+        setSubGenre={(v) => form.setValue('subGenre', v)}
+        mood={form.watch('mood')}
+        setMood={(v) => form.setValue('mood', v)}
+      />
 
       <FieldRow label="Description">
         <textarea
           rows={4}
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
           {...form.register('description')}
         />
       </FieldRow>
@@ -487,26 +723,28 @@ function ManualAddFlow() {
       <hr className="border-slate-200 my-4" />
       <h2 className="text-sm font-medium text-slate-700">Edition details</h2>
 
-      <EditionFieldset register={form.register} watch={form.watch} />
+      <EditionFieldset
+        register={form.register}
+        watch={form.watch}
+        setValue={form.setValue}
+      />
 
-      <FieldRow label="ISBN" hint="Optional — leave blank if unknown">
-        <input
-          type="text"
-          inputMode="numeric"
-          placeholder="978…"
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          {...form.register('isbn')}
-        />
-      </FieldRow>
+      <CoverUploadOptional
+        coverFile={coverFile}
+        onCoverFile={setCoverFile}
+        coverUrl={coverUrl}
+        onCoverUrl={setCoverUrl}
+      />
 
-      <button
+      <LoadingButton
         type="submit"
-        disabled={addManually.isPending}
-        className="w-full inline-flex items-center justify-center gap-2 rounded-md bg-teal-500 hover:bg-teal-600 px-4 py-2 text-sm text-white disabled:opacity-60"
+        pending={addManually.isPending}
+        pendingLabel="Saving…"
+        icon={BookPlus}
+        className="w-full rounded-md bg-teal-500 hover:bg-teal-600 px-4 py-2 text-sm text-white"
       >
-        <BookPlus className="h-4 w-4" />
-        {addManually.isPending ? 'Saving…' : 'Add to library'}
-      </button>
+        Add to library
+      </LoadingButton>
       {addManually.error && (
         <p className="text-xs text-rose-600">{addManually.error.message}</p>
       )}
@@ -531,6 +769,8 @@ function AddEditionFlow({ initialBookId }: { initialBookId: string | null }) {
   const [scannerOpen, setScannerOpen] = useState(false)
   const { data: pickedBook } = useBook(bookId ?? undefined)
   const add = useAddEdition()
+  const [coverFile, setCoverFile] = useState<File | null>(null)
+  const [coverUrl, setCoverUrl] = useState('')
 
   // Optional ISBN lookup to auto-fill edition fields when attaching to
   // an existing book — just for convenience.
@@ -548,6 +788,14 @@ function AddEditionFlow({ initialBookId }: { initialBookId: string | null }) {
     },
   })
 
+  const runIsbnLookup = () => {
+    const raw = form.getValues('isbn').trim()
+    if (!raw) return
+    const isbn = normalizeIsbn(raw)
+    form.setValue('isbn', isbn)
+    isbnLookup.mutate(isbn)
+  }
+
   // When the lookup succeeds, auto-fill the form fields it can populate.
   useEffect(() => {
     if (!isbnLookup.data) return
@@ -562,26 +810,32 @@ function AddEditionFlow({ initialBookId }: { initialBookId: string | null }) {
     if (!bookId) return
     const yearTrim = v.publishedYear.trim()
     const pagesTrim = v.pageCount.trim()
+    const purchased = v.isPurchased
+    const isEbook = v.format === 'ebook'
     const edition = await add.mutateAsync({
       bookId,
       format: v.format as Format,
-      isbn: v.isbn.trim() || null,
+      isbn: isEbook ? null : v.isbn.trim() || null,
       publisher: v.publisher.trim() || null,
       publicationYear:
         yearTrim === '' ? null : Number.isFinite(Number(yearTrim)) ? Number(yearTrim) : null,
       pageCount:
         pagesTrim === '' ? null : Number.isFinite(Number(pagesTrim)) ? Number(pagesTrim) : null,
       durationSeconds: null,
-      purchaseDate: v.purchaseDate || null,
-      purchaseLocation: v.purchaseLocation.trim() || null,
-      purchasePrice: priceToNull(v.purchasePrice),
-      condition: (v.condition || null) as Condition | null,
+      purchaseDate: purchased ? v.purchaseDate || null : null,
+      purchaseLocation: purchased ? v.purchaseLocation.trim() || null : null,
+      purchasePrice: purchased ? priceToNull(v.purchasePrice) : null,
+      condition:
+        purchased && !isEbook ? ((v.condition || null) as Condition | null) : null,
       startedAt: null,
       finishedAt: null,
       isTrophy: false,
-      storeId: v.storeId || null,
-      isPreorder: v.isPreorder,
-      displayName: v.displayName.trim() || null,
+      storeId: purchased ? v.storeId || null : null,
+      isPreorder: purchased ? v.isPreorder : false,
+      displayName: isEbook ? null : v.displayName.trim() || null,
+      acquired: deriveAcquired(v),
+      coverFile,
+      coverUrl: coverUrl.trim() || null,
     })
     navigate(`/book/${edition.book_id}`)
   }
@@ -625,36 +879,47 @@ function AddEditionFlow({ initialBookId }: { initialBookId: string | null }) {
         <p className="text-xs text-slate-600 mb-1">
           Scan or paste an ISBN to auto-fill edition details (optional).
         </p>
-        <div className="flex gap-2">
+        <div className="flex gap-2 min-w-0">
           <input
             id="quick-isbn"
             type="text"
             inputMode="numeric"
             placeholder="978…"
-            value={form.watch('isbn')}
-            onChange={(e) => form.setValue('isbn', e.target.value)}
             className="flex-1 min-w-0 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
+            {...form.register('isbn')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                runIsbnLookup()
+              }
+            }}
           />
           <button
             type="button"
             onClick={() => setScannerOpen(true)}
             aria-label="Scan barcode"
-            className="inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
+            className="shrink-0 inline-flex items-center justify-center rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50"
           >
             <Camera className="h-4 w-4" />
           </button>
-          <button
+          <LoadingButton
             type="button"
-            onClick={() => {
-              const isbn = form.getValues('isbn').trim()
-              if (isbn) isbnLookup.mutate(isbn)
-            }}
-            disabled={isbnLookup.isPending || !form.watch('isbn').trim()}
-            className="inline-flex items-center gap-1 rounded-md bg-slate-200 hover:bg-slate-300 px-3 py-1.5 text-sm text-slate-700 disabled:opacity-60"
+            onClick={runIsbnLookup}
+            pending={isbnLookup.isPending}
+            pendingLabel="…"
+            disabled={!form.watch('isbn')?.toString().trim()}
+            className="shrink-0 rounded-md bg-slate-200 hover:bg-slate-300 px-3 py-1.5 text-sm text-slate-700"
           >
-            {isbnLookup.isPending ? 'Looking…' : 'Look up'}
-          </button>
+            Look up
+          </LoadingButton>
         </div>
+        {isbnLookup.isSuccess && isbnLookup.data && (
+          <p className="text-xs text-emerald-700">
+            Found: {isbnLookup.data.title}
+            {isbnLookup.data.authors.length > 0 &&
+              ` · ${isbnLookup.data.authors.join(', ')}`}
+          </p>
+        )}
         {isbnLookup.error && (
           <p className="text-xs text-rose-600">
             {isbnLookup.error instanceof IsbnNotFoundError
@@ -665,14 +930,19 @@ function AddEditionFlow({ initialBookId }: { initialBookId: string | null }) {
       </div>
 
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
-        <EditionFieldset register={form.register} watch={form.watch} hideIsbn />
+        <EditionFieldset
+          register={form.register}
+          watch={form.watch}
+          setValue={form.setValue}
+          hideIsbn
+        />
 
         <div className="grid grid-cols-2 gap-2">
           <FieldRow label="Publisher">
             <input
               type="text"
               {...form.register('publisher')}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
             />
           </FieldRow>
           <FieldRow label="Year">
@@ -681,7 +951,7 @@ function AddEditionFlow({ initialBookId }: { initialBookId: string | null }) {
               min="0"
               max="9999"
               {...form.register('publishedYear')}
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
             />
           </FieldRow>
         </div>
@@ -691,18 +961,26 @@ function AddEditionFlow({ initialBookId }: { initialBookId: string | null }) {
             type="number"
             min="0"
             {...form.register('pageCount')}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
           />
         </FieldRow>
 
-        <button
+        <CoverUploadOptional
+          coverFile={coverFile}
+          onCoverFile={setCoverFile}
+          coverUrl={coverUrl}
+          onCoverUrl={setCoverUrl}
+        />
+
+        <LoadingButton
           type="submit"
-          disabled={add.isPending}
-          className="w-full inline-flex items-center justify-center gap-2 rounded-md bg-teal-500 hover:bg-teal-600 px-4 py-2 text-sm text-white disabled:opacity-60"
+          pending={add.isPending}
+          pendingLabel="Saving…"
+          icon={BookPlus}
+          className="w-full rounded-md bg-teal-500 hover:bg-teal-600 px-4 py-2 text-sm text-white"
         >
-          <BookPlus className="h-4 w-4" />
-          {add.isPending ? 'Saving…' : 'Add edition'}
-        </button>
+          Add edition
+        </LoadingButton>
         {add.error && (
           <p className="text-xs text-rose-600">{add.error.message}</p>
         )}
@@ -713,8 +991,9 @@ function AddEditionFlow({ initialBookId }: { initialBookId: string | null }) {
         onClose={() => setScannerOpen(false)}
         onDetected={(code) => {
           setScannerOpen(false)
-          form.setValue('isbn', code)
-          isbnLookup.mutate(code)
+          const isbn = normalizeIsbn(code)
+          form.setValue('isbn', isbn)
+          isbnLookup.mutate(isbn)
         }}
       />
     </div>
@@ -800,107 +1079,148 @@ function BookPicker({ onPick }: { onPick: (id: string) => void }) {
 function EditionFieldset<T extends FieldValues>({
   register,
   watch,
+  setValue,
   hideIsbn,
 }: {
   register: UseFormRegister<T>
   watch: (name: Path<T>) => unknown
+  setValue: UseFormSetValue<T>
   hideIsbn?: boolean
 }) {
+  const format = watch('format' as Path<T>) as Format
+  const isEbook = format === 'ebook'
+  const isPurchased = watch('isPurchased' as Path<T>) === true
+  const isLibrary = watch('isLibrary' as Path<T>) === true
+  const showIsbn = !hideIsbn && !isEbook
+  const inputClass =
+    'w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm'
+
+  // The two acquisition checkboxes are mutually exclusive.
+  const purchasedReg = register('isPurchased' as Path<T>)
+  const libraryReg = register('isLibrary' as Path<T>)
+  const setBool = (name: 'isPurchased' | 'isLibrary', value: boolean) =>
+    setValue(name as Path<T>, value as PathValue<T, Path<T>>)
+
   return (
     <div className="space-y-3">
-      <FieldRow label="Format">
-        <select
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm bg-white"
-          {...register('format' as Path<T>)}
-        >
-          <option value="paperback">Paperback</option>
-          <option value="hardcover">Hardcover</option>
-          <option value="ebook">eBook</option>
-          <option value="audiobook">Audiobook</option>
-          <option value="special_edition">Special edition</option>
-          <option value="other">Other</option>
-        </select>
-      </FieldRow>
+      {/* Format + ISBN share a line (ISBN hidden for ebooks) */}
+      <div className={`grid gap-2 ${showIsbn ? 'grid-cols-2' : 'grid-cols-1'}`}>
+        <FieldRow label="Format">
+          <select className={inputClass} {...register('format' as Path<T>)}>
+            <option value="paperback">Paperback</option>
+            <option value="hardcover">Hardcover</option>
+            <option value="ebook">ePub</option>
+            <option value="audiobook">Audiobook</option>
+            <option value="special_edition">Special edition</option>
+            <option value="other">Other</option>
+          </select>
+        </FieldRow>
+        {showIsbn && (
+          <FieldRow label="ISBN" hint="Optional">
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="978…"
+              className={inputClass}
+              {...register('isbn' as Path<T>)}
+            />
+          </FieldRow>
+        )}
+      </div>
 
-      <FieldRow label="Edition name" hint='Optional — e.g. "UK Hardcover"'>
-        <input
-          type="text"
-          className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          {...register('displayName' as Path<T>)}
-        />
-      </FieldRow>
-
-      {!hideIsbn && (
-        <FieldRow label="ISBN" hint="Optional">
+      {/* Edition name — not shown for ebooks */}
+      {!isEbook && (
+        <FieldRow label="Edition name" hint='Optional — e.g. "UK Hardcover"'>
           <input
             type="text"
-            inputMode="numeric"
-            placeholder="978…"
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            {...register('isbn' as Path<T>)}
+            className={inputClass}
+            {...register('displayName' as Path<T>)}
           />
         </FieldRow>
       )}
 
-      <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-        <input
-          type="checkbox"
-          {...register('isPreorder' as Path<T>)}
-          className="accent-teal-500"
-        />
-        Pre-order (haven't received it yet)
-      </label>
+      {/* Acquisition — both optional; leave unticked for "not set" */}
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-slate-700">Acquired</p>
+        <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+          <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+            <input
+              type="checkbox"
+              {...purchasedReg}
+              onChange={(e) => {
+                purchasedReg.onChange(e)
+                if (e.target.checked) setBool('isLibrary', false)
+              }}
+              className="accent-teal-500"
+            />
+            Purchased
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+            <input
+              type="checkbox"
+              {...libraryReg}
+              onChange={(e) => {
+                libraryReg.onChange(e)
+                if (e.target.checked) setBool('isPurchased', false)
+              }}
+              className="accent-teal-500"
+            />
+            Library
+          </label>
+        </div>
+        {!isPurchased && (
+          <p className="text-xs text-slate-400">
+            {isLibrary ? 'Acquired: Library' : 'Acquired: not set'}
+          </p>
+        )}
+      </div>
 
-      <StorePicker register={register} watch={watch} />
+      {isPurchased && (
+        <div className="rounded-md border border-slate-200 bg-white p-3 space-y-2.5">
+          <p className="text-xs font-medium text-slate-700">Acquired info</p>
 
-      <details className="rounded-md border border-slate-200 bg-white">
-        <summary className="cursor-pointer px-3 py-2 text-sm text-slate-700">
-          Purchase details (optional)
-        </summary>
-        <div className="p-3 pt-0 space-y-2">
+          {!isEbook && (
+            <FieldRow label="Condition">
+              <select className={inputClass} {...register('condition' as Path<T>)}>
+                <option value="">Not set</option>
+                <option value="new">New</option>
+                <option value="second_hand">Second hand</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </FieldRow>
+          )}
+
+          <StorePicker register={register} />
+
+          <label className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+            <input
+              type="checkbox"
+              {...register('isPreorder' as Path<T>)}
+              className="accent-teal-500"
+            />
+            Pre-order (haven't received it yet)
+          </label>
+
           <div className="grid grid-cols-2 gap-2">
             <FieldRow label="Bought on">
-              <input
-                type="date"
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              <PastDateInput
+                className={inputClass}
                 {...register('purchaseDate' as Path<T>)}
               />
             </FieldRow>
-            <FieldRow label="Price (AUD)">
+            <FieldRow label="Price (NZD)">
               <input
                 type="number"
                 step="0.01"
                 min="0"
                 placeholder="0.00"
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                className={inputClass}
                 {...register('purchasePrice' as Path<T>)}
               />
             </FieldRow>
           </div>
-          <FieldRow label="Condition">
-            <select
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm bg-white"
-              {...register('condition' as Path<T>)}
-            >
-              <option value="">Not set</option>
-              <option value="new">New</option>
-              <option value="second_hand">Second hand</option>
-              <option value="unknown">Unknown</option>
-            </select>
-          </FieldRow>
-          <FieldRow
-            label="Where (free text)"
-            hint="If your store isn't picked above"
-          >
-            <input
-              type="text"
-              placeholder="e.g. op-shop, gifted"
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              {...register('purchaseLocation' as Path<T>)}
-            />
-          </FieldRow>
         </div>
-      </details>
+      )}
     </div>
   )
 }
@@ -909,79 +1229,23 @@ function StorePicker<T extends FieldValues>({
   register,
 }: {
   register: UseFormRegister<T>
-  watch: (name: Path<T>) => unknown
 }) {
   const { data: stores = [] } = useStores()
-  const add = useAddStore()
-  const [adding, setAdding] = useState(false)
-  const [name, setName] = useState('')
-
-  const onAdd = async () => {
-    const n = name.trim()
-    if (!n) {
-      setAdding(false)
-      return
-    }
-    await add.mutateAsync({ name: n })
-    setName('')
-    setAdding(false)
-  }
 
   return (
     <div>
-      <label className="block text-xs text-slate-600 mb-1">Store</label>
-      <div className="flex items-center gap-2">
-        <select
-          className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm bg-white"
-          {...register('storeId' as Path<T>)}
-        >
-          <option value="">Not set</option>
-          {stores.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-        {!adding && (
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            className="text-xs rounded-md border border-slate-300 px-2.5 py-2 text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1"
-          >
-            <Plus className="h-3 w-3" /> New
-          </button>
-        )}
-      </div>
-      {adding && (
-        <div className="mt-1.5 flex items-center gap-2">
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="New store name"
-            autoFocus
-            className="flex-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-xs"
-          />
-          <button
-            type="button"
-            onClick={onAdd}
-            disabled={add.isPending || !name.trim()}
-            className="text-xs rounded-full bg-teal-500 hover:bg-teal-600 text-white px-2.5 py-1.5 disabled:opacity-60"
-          >
-            {add.isPending ? '…' : 'Save'}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setAdding(false)
-              setName('')
-            }}
-            className="text-xs text-slate-500 hover:text-slate-700"
-          >
-            Cancel
-          </button>
-        </div>
-      )}
+      <label className="block text-xs text-slate-600 mb-1">Location</label>
+      <select
+        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+        {...register('storeId' as Path<T>)}
+      >
+        <option value="">Not set</option>
+        {stores.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+          </option>
+        ))}
+      </select>
     </div>
   )
 }
@@ -1138,6 +1402,54 @@ function PreviewCard({
         )}
       </div>
     </div>
+  )
+}
+
+function CoverUploadOptional({
+  coverFile,
+  onCoverFile,
+  coverUrl,
+  onCoverUrl,
+}: {
+  coverFile: File | null
+  onCoverFile: (f: File | null) => void
+  coverUrl: string
+  onCoverUrl: (u: string) => void
+}) {
+  return (
+    <FieldRow label="Cover" hint="Optional — upload or paste image URL">
+      <div className="space-y-2">
+        <label className="inline-flex items-center gap-2 text-sm text-teal-600 hover:text-teal-700 cursor-pointer">
+          <span className="rounded-md border border-slate-300 px-3 py-1.5 text-slate-700 hover:bg-slate-50">
+            Choose image
+          </span>
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0] ?? null
+              onCoverFile(f)
+              if (f) onCoverUrl('')
+              e.target.value = ''
+            }}
+          />
+        </label>
+        {coverFile && (
+          <p className="text-xs text-slate-600 truncate">{coverFile.name}</p>
+        )}
+        <input
+          type="url"
+          placeholder="Or paste cover image URL"
+          value={coverUrl}
+          onChange={(e) => {
+            onCoverUrl(e.target.value)
+            if (e.target.value.trim()) onCoverFile(null)
+          }}
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+        />
+      </div>
+    </FieldRow>
   )
 }
 

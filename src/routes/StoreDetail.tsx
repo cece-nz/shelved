@@ -71,7 +71,7 @@ export function StoreDetail() {
             <div className="rounded-xl border border-slate-200 bg-white p-3">
               <p className="text-xs text-slate-500">Total spent</p>
               <p className="text-xl font-bold text-slate-900 mt-0.5">
-                AUD {total.toFixed(2)}
+                NZD {total.toFixed(2)}
               </p>
             </div>
           </div>
@@ -111,7 +111,7 @@ export function StoreDetail() {
                         )}
                         {e.purchase_price != null && (
                           <span className="text-xs font-medium text-slate-700">
-                            AUD {e.purchase_price}
+                            NZD {e.purchase_price}
                           </span>
                         )}
                         {e.is_preorder && (

@@ -7,7 +7,11 @@
 --   * else book on TBR list → 'want_to_read'
 
 alter table books
-  add column reading_status text
+  add column if not exists reading_status text;
+
+alter table books drop constraint if exists books_reading_status_check;
+
+alter table books add constraint books_reading_status_check
   check (reading_status is null or reading_status in ('want_to_read', 'reading', 'read'));
 
 update books set reading_status = 'want_to_read'

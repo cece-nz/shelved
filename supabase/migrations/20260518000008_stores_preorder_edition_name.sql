@@ -35,9 +35,9 @@ create policy "owner_all" on stores
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 alter table editions
-  add column store_id uuid references stores(id) on delete set null,
-  add column is_preorder boolean not null default false,
-  add column display_name text;
+  add column if not exists store_id uuid references stores(id) on delete set null,
+  add column if not exists is_preorder boolean not null default false,
+  add column if not exists display_name text;
 
 create index editions_store_id_idx on editions (store_id);
 

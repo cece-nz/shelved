@@ -6,5 +6,7 @@
 -- per state, no history of re-reads.
 
 alter table editions
-  add column started_at date,
-  add column finished_at date;
+  add column if not exists started_at date,
+  add column if not exists finished_at date;
+
+notify pgrst, 'reload schema';

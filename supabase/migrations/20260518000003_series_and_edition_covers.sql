@@ -10,12 +10,14 @@
 -- then to a stylized title placeholder.
 
 alter table books
-  add column series_name text,
-  add column series_index numeric(5, 2);
+  add column if not exists series_name text,
+  add column if not exists series_index numeric(5, 2);
 
 create index books_user_series_idx
   on books (user_id, series_name, series_index)
   where series_name is not null;
 
 alter table editions
-  add column cover_path text;
+  add column if not exists cover_path text;
+
+notify pgrst, 'reload schema';

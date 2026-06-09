@@ -23,7 +23,7 @@ export function Layout() {
 
       <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
-      <main className="flex-1 pt-4 px-4 pb-8 max-w-4xl mx-auto w-full">
+      <main className="flex-1 pt-4 px-4 pb-8 max-w-4xl mx-auto w-full min-w-0 overflow-x-hidden">
         <Outlet />
       </main>
     </div>

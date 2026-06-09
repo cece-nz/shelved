@@ -1,9 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase.ts'
-import { uploadEditionCoverFile } from '../lib/storage.ts'
+import {
+  downloadAndStoreEditionCover,
+  uploadEditionCoverFile,
+} from '../lib/storage.ts'
 import { useAuth } from '../auth/AuthProvider.tsx'
 import { bookKey, booksKey } from './books.ts'
 import type {
+  Acquired,
   Condition,
   EditionRow,
   Format,
@@ -20,6 +24,14 @@ export const editionCountsKey = ['editions', 'counts'] as const
  * (a few thousand rows max). When the library gets bigger we can move
  * this to a Postgres view + a single RPC call.
  */
+/** DB allows null or new/second_hand/unknown — never empty string. */
+function sanitizeCondition(
+  condition: Condition | null | '',
+): Condition | null {
+  if (!condition) return null
+  return condition
+}
+
 export type NewEditionInput = {
   bookId: string
   format: Format
@@ -32,6 +44,7 @@ export type NewEditionInput = {
   purchaseLocation: string | null
   purchasePrice: number | null
   condition: Condition | null
+  acquired: Acquired
   startedAt: string | null
   finishedAt: string | null
   isTrophy: boolean
@@ -45,12 +58,18 @@ export function useAddEdition() {
   const qc = useQueryClient()
   const { session } = useAuth()
   return useMutation({
-    mutationFn: async (input: NewEditionInput): Promise<EditionRow> => {
+    mutationFn: async (
+      input: NewEditionInput & {
+        coverFile?: File | null
+        coverUrl?: string | null
+      },
+    ): Promise<EditionRow> => {
       if (!session) throw new Error('Not signed in')
+      const userId = session.user.id
       const { data, error } = await supabase
         .from('editions')
         .insert({
-          user_id: session.user.id,
+          user_id: userId,
           book_id: input.bookId,
           format: input.format,
           isbn: input.isbn,
@@ -63,18 +82,53 @@ export function useAddEdition() {
           purchase_date: input.purchaseDate,
           purchase_location: input.purchaseLocation,
           purchase_price: input.purchasePrice,
-          condition: input.condition,
+          condition: sanitizeCondition(input.condition),
+          acquired: input.acquired,
           started_at: input.startedAt,
           finished_at: input.finishedAt,
           is_trophy: input.isTrophy,
           store_id: input.storeId,
           is_preorder: input.isPreorder,
           display_name: input.displayName,
+          currency: 'NZD',
         })
         .select()
         .single()
       if (error) throw error
-      return data
+
+      // Optional cover supplied at add time (best-effort — the edition is
+      // already saved if this fails).
+      let row = data
+      try {
+        let path: string | null = null
+        if (input.coverFile) {
+          path = await uploadEditionCoverFile(
+            input.coverFile,
+            userId,
+            row.book_id,
+            row.id,
+          )
+        } else if (input.coverUrl) {
+          path = await downloadAndStoreEditionCover(
+            input.coverUrl,
+            userId,
+            row.book_id,
+            row.id,
+          )
+        }
+        if (path) {
+          const { data: updated } = await supabase
+            .from('editions')
+            .update({ cover_path: path })
+            .eq('id', row.id)
+            .select()
+            .single()
+          if (updated) row = updated
+        }
+      } catch {
+        // ignore cover failure
+      }
+      return row
     },
     onSuccess: (edition) => {
       qc.invalidateQueries({ queryKey: editionsByBookKey(edition.book_id) })
@@ -94,6 +148,80 @@ export function useSetEditionCoverFromFile(editionId: string, bookId: string) {
       if (!session) throw new Error('Not signed in')
       const path = await uploadEditionCoverFile(
         file,
+        session.user.id,
+        bookId,
+        editionId,
+      )
+      const { data, error } = await supabase
+        .from('editions')
+        .update({ cover_path: path })
+        .eq('id', editionId)
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    },
+    onSuccess: (edition) => {
+      qc.invalidateQueries({ queryKey: editionsByBookKey(edition.book_id) })
+    },
+  })
+}
+
+export type UpdateEditionInput = Omit<NewEditionInput, 'bookId'>
+
+/** Update an existing edition's metadata (not cover — use cover hooks). */
+export function useUpdateEdition(editionId: string, bookId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (input: UpdateEditionInput): Promise<EditionRow> => {
+      const { data, error } = await supabase
+        .from('editions')
+        .update({
+          format: input.format,
+          isbn: input.isbn,
+          publisher: input.publisher,
+          publication_date: input.publicationYear
+            ? `${input.publicationYear}-01-01`
+            : null,
+          page_count: input.pageCount,
+          duration_seconds: input.durationSeconds,
+          purchase_date: input.purchaseDate,
+          purchase_location: input.purchaseLocation,
+          purchase_price: input.purchasePrice,
+          currency: 'NZD',
+          condition: sanitizeCondition(input.condition),
+          acquired: input.acquired,
+          started_at: input.startedAt,
+          finished_at: input.finishedAt,
+          is_trophy: input.isTrophy,
+          store_id: input.storeId,
+          is_preorder: input.isPreorder,
+          display_name: input.displayName,
+        })
+        .eq('id', editionId)
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: editionsByBookKey(bookId) })
+      qc.invalidateQueries({ queryKey: editionSummariesKey })
+      qc.invalidateQueries({ queryKey: ['editions', 'counts'] })
+      qc.invalidateQueries({ queryKey: bookKey(bookId) })
+    },
+  })
+}
+
+/** Set edition cover from an image URL (direct link). */
+export function useSetEditionCoverFromUrl(editionId: string, bookId: string) {
+  const qc = useQueryClient()
+  const { session } = useAuth()
+  return useMutation({
+    mutationFn: async (url: string): Promise<EditionRow> => {
+      if (!session) throw new Error('Not signed in')
+      const path = await downloadAndStoreEditionCover(
+        url,
         session.user.id,
         bookId,
         editionId,

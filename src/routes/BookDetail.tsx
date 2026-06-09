@@ -4,6 +4,7 @@ import { ChevronLeft, Trash2, Send, BookMarked, BookOpen, CheckCircle2, ChevronU
 import {
   useBook,
   useBooks,
+  useBookFacetValues,
   useDeleteBook,
   useSetCoverFromFile,
   useSetCoverFromUrl,
@@ -13,20 +14,27 @@ import {
 import {
   useEditions,
   useDeleteEdition,
-  useSetEditionCoverFromFile,
-  useClearEditionCover,
+  useUpdateEdition,
+  type UpdateEditionInput,
 } from '../queries/editions.ts'
+import { EditionCoverEditor } from '../components/EditionCoverEditor.tsx'
+import { PastDateInput } from '../components/PastDateInput.tsx'
+import { LoadingButton } from '../components/LoadingButton.tsx'
+import { StoreSelect } from '../components/StoreSelect.tsx'
+import { AutofillInput } from '../components/AutofillInput.tsx'
+import { FacetSelect } from '../components/FacetSelect.tsx'
 import { useNotes, useAddNote, useDeleteNote } from '../queries/notes.ts'
 import {
   useBookListMembership,
   useAddToTbr,
   useRemoveFromTbr,
 } from '../queries/lists.ts'
+import { useStores } from '../queries/stores.ts'
 import { Cover } from '../components/Cover.tsx'
 import { FormatBadge } from '../components/FormatBadge.tsx'
 import { StarRating } from '../components/StarRating.tsx'
 import { formatDate } from '../lib/dates.ts'
-import type { EditionRow, NoteRow, ReadingStatus } from '../lib/database.types.ts'
+import type { Condition, EditionRow, NoteRow, ReadingStatus } from '../lib/database.types.ts'
 
 export function BookDetail() {
   const { id } = useParams<{ id: string }>()
@@ -58,7 +66,7 @@ export function BookDetail() {
       {book && (
         <>
           <div className="flex gap-4 sm:gap-6">
-            <div className="flex flex-col gap-1.5 shrink-0">
+            <div className="shrink-0">
               <Cover
                 path={book.cover_path}
                 title={book.title}
@@ -66,7 +74,6 @@ export function BookDetail() {
                 version={book.updated_at}
                 className="w-32 h-48 sm:w-44 sm:h-64 shadow-md rounded-md"
               />
-              <CoverUrlEditor bookId={book.id} hasCover={Boolean(book.cover_path)} />
             </div>
             <MetadataBlock
               book={book}
@@ -83,8 +90,10 @@ export function BookDetail() {
           )}
 
           <section className="mt-5">
-            <h2 className="text-sm font-medium text-slate-700 mb-2">Genres</h2>
-            <GenreChips book={book} />
+            <h2 className="text-sm font-medium text-slate-700 mb-2">
+              Classification
+            </h2>
+            <ClassificationBlock book={book} />
           </section>
 
           <TbrControls bookId={book.id} />
@@ -108,10 +117,10 @@ function MetadataBlock({
 }) {
   const [editing, setEditing] = useState(false)
   const update = useUpdateBook(book.id)
+  const facets = useBookFacetValues()
   const [title, setTitle] = useState(book.title)
   const [authors, setAuthors] = useState(book.authors.join(', '))
   const [year, setYear] = useState(book.published_year?.toString() ?? '')
-  const [genres, setGenres] = useState(book.genres.join(', '))
   const [seriesName, setSeriesName] = useState(book.series_name ?? '')
   const [seriesIndex, setSeriesIndex] = useState(
     book.series_index?.toString() ?? '',
@@ -134,10 +143,6 @@ function MetadataBlock({
             : Number.isFinite(Number(trimmedYear))
               ? Number(trimmedYear)
               : null,
-        genres: genres
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
         series_name: seriesName.trim() || null,
         series_index:
           trimmedSeriesIdx === ''
@@ -157,7 +162,6 @@ function MetadataBlock({
     setTitle(book.title)
     setAuthors(book.authors.join(', '))
     setYear(book.published_year?.toString() ?? '')
-    setGenres(book.genres.join(', '))
     setSeriesName(book.series_name ?? '')
     setSeriesIndex(book.series_index?.toString() ?? '')
     setDescription(book.description ?? '')
@@ -215,7 +219,6 @@ function MetadataBlock({
             size="sm"
           />
         </div>
-        <TagChips book={book} />
         <button
           type="button"
           onClick={() => setEditing(true)}
@@ -252,15 +255,9 @@ function MetadataBlock({
         placeholder="Year"
         className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-xs"
       />
-      <input
-        type="text"
-        value={genres}
-        onChange={(e) => setGenres(e.target.value)}
-        placeholder="Genres, comma-separated"
-        className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-xs"
-      />
       <div className="grid grid-cols-[2fr_1fr] gap-1.5">
-        <input
+        <AutofillInput
+          options={facets.series}
           type="text"
           value={seriesName}
           onChange={(e) => setSeriesName(e.target.value)}
@@ -283,6 +280,10 @@ function MetadataBlock({
         rows={4}
         className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-xs"
       />
+      <div>
+        <p className="text-xs text-slate-600 mb-1">Cover image</p>
+        <CoverUrlEditor bookId={book.id} hasCover={Boolean(book.cover_path)} />
+      </div>
       <div className="flex gap-1.5">
         <button
           type="button"
@@ -505,152 +506,61 @@ function ShelfRow({
   )
 }
 
-function GenreChips({ book }: { book: import('../lib/database.types.ts').BookRow }) {
+function ClassificationBlock({
+  book,
+}: {
+  book: import('../lib/database.types.ts').BookRow
+}) {
   const update = useUpdateBook(book.id)
-  const [input, setInput] = useState('')
-  const [adding, setAdding] = useState(false)
-
-  const addGenre = () => {
-    const g = input.trim()
-    if (!g) {
-      setAdding(false)
-      return
-    }
-    if (book.genres.includes(g)) {
-      setInput('')
-      setAdding(false)
-      return
-    }
-    update.mutate({ genres: [...book.genres, g] })
-    setInput('')
-    setAdding(false)
-  }
-
-  const removeGenre = (g: string) => {
-    update.mutate({ genres: book.genres.filter((x) => x !== g) })
-  }
+  const facets = useBookFacetValues()
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {book.genres.map((g) => (
-        <span
-          key={g}
-          className="inline-flex items-center gap-1 rounded-full bg-slate-100 text-slate-700 text-xs pl-2.5 pr-1.5 py-1"
-        >
-          {g}
-          <button
-            type="button"
-            onClick={() => removeGenre(g)}
-            aria-label={`Remove genre ${g}`}
-            className="hover:bg-slate-200 rounded-full p-0.5"
-          >
-            <X className="h-2.5 w-2.5" />
-          </button>
-        </span>
-      ))}
-      {adding ? (
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onBlur={addGenre}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              addGenre()
-            } else if (e.key === 'Escape') {
-              setAdding(false)
-              setInput('')
-            }
-          }}
-          autoFocus
-          placeholder="new genre"
-          className="rounded-full border border-slate-200 px-2.5 py-1 text-xs w-24 focus:outline-none focus:border-teal-300"
+    <div className="space-y-3">
+      <FacetRow label="Reading age">
+        <FacetSelect
+          value={book.reading_age ?? ''}
+          onChange={(v) => update.mutate({ reading_age: v || null })}
+          options={facets.readingAges}
         />
-      ) : (
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-slate-300 text-slate-500 hover:text-slate-700 hover:border-slate-400 text-xs px-2.5 py-1"
-        >
-          <Plus className="h-3 w-3" /> genre
-        </button>
-      )}
+      </FacetRow>
+      <FacetRow label="Genre">
+        <FacetSelect
+          value={book.genre ?? ''}
+          onChange={(v) => update.mutate({ genre: v || null, sub_genre: null })}
+          options={facets.genres}
+        />
+      </FacetRow>
+      <FacetRow label="Sub genre">
+        <FacetSelect
+          value={book.sub_genre ?? ''}
+          onChange={(v) => update.mutate({ sub_genre: v || null })}
+          options={facets.subGenresFor(book.genre)}
+          disabled={!book.genre}
+          placeholder={book.genre ? 'Not set' : 'Pick a genre first'}
+        />
+      </FacetRow>
+      <FacetRow label="Mood">
+        <FacetSelect
+          value={book.mood ?? ''}
+          onChange={(v) => update.mutate({ mood: v || null })}
+          options={facets.moods}
+        />
+      </FacetRow>
     </div>
   )
 }
 
-function TagChips({ book }: { book: import('../lib/database.types.ts').BookRow }) {
-  const update = useUpdateBook(book.id)
-  const [input, setInput] = useState('')
-  const [adding, setAdding] = useState(false)
-
-  const addTag = () => {
-    const tag = input.trim()
-    if (!tag) {
-      setAdding(false)
-      return
-    }
-    if (book.tags.includes(tag)) {
-      setInput('')
-      setAdding(false)
-      return
-    }
-    update.mutate({ tags: [...book.tags, tag] })
-    setInput('')
-    setAdding(false)
-  }
-
-  const removeTag = (tag: string) => {
-    update.mutate({ tags: book.tags.filter((t) => t !== tag) })
-  }
-
+function FacetRow({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}) {
   return (
-    <div className="flex flex-wrap items-center gap-1 pt-1.5">
-      {book.tags.map((tag) => (
-        <span
-          key={tag}
-          className="inline-flex items-center gap-1 rounded-full bg-teal-100 text-teal-700 text-[10px] font-medium pl-2 pr-1 py-0.5"
-        >
-          {tag}
-          <button
-            type="button"
-            onClick={() => removeTag(tag)}
-            aria-label={`Remove tag ${tag}`}
-            className="hover:bg-teal-200 rounded-full p-0.5"
-          >
-            <X className="h-2.5 w-2.5" />
-          </button>
-        </span>
-      ))}
-      {adding ? (
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onBlur={addTag}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              addTag()
-            } else if (e.key === 'Escape') {
-              setAdding(false)
-              setInput('')
-            }
-          }}
-          autoFocus
-          placeholder="new tag"
-          className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] w-20 focus:outline-none focus:border-teal-300"
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={() => setAdding(true)}
-          className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-slate-300 text-slate-500 hover:text-slate-700 hover:border-slate-400 text-[10px] px-2 py-0.5"
-        >
-          <Plus className="h-2.5 w-2.5" /> tag
-        </button>
-      )}
+    <div>
+      <p className="text-xs font-medium text-slate-600 mb-1">{label}</p>
+      {children}
     </div>
   )
 }
@@ -823,7 +733,7 @@ function Editions({ editions, book }: { editions: EditionRow[]; book: import('..
         </p>
       )}
 
-      <ul className="space-y-2">
+      <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {editions.map((edition) => (
           <EditionCard
             key={edition.id}
@@ -843,44 +753,55 @@ function EditionCard({
   edition: EditionRow
   book: import('../lib/database.types.ts').BookRow
 }) {
+  const [editing, setEditing] = useState(false)
   const del = useDeleteEdition()
-  const setCover = useSetEditionCoverFromFile(edition.id, edition.book_id)
-  const clearCover = useClearEditionCover(edition.id, edition.book_id)
-  const fileInputId = `edition-cover-${edition.id}`
 
-  // Edition cover wins; otherwise fall back to the book cover; failing
-  // both, Cover's placeholder kicks in.
   const coverPath = edition.cover_path ?? book.cover_path
   const coverVersion = edition.cover_path
     ? edition.updated_at
     : book.updated_at
 
+  if (editing) {
+    return (
+      <li className="rounded-md border border-teal-200 bg-white p-2.5 sm:col-span-2">
+        <EditionEditForm
+          edition={edition}
+          book={book}
+          onClose={() => setEditing(false)}
+        />
+      </li>
+    )
+  }
+
   return (
-    <li className="rounded-md border border-slate-200 bg-white p-3">
-      <div className="flex gap-3">
+    <li className="rounded-md border border-slate-200 bg-white p-2">
+      <div className="flex gap-2">
         <Cover
           path={coverPath}
           title={book.title}
           authors={book.authors}
           version={coverVersion}
-          className="w-14 h-20 shrink-0"
+          className="w-10 h-14 shrink-0 rounded"
         />
-        <div className="flex-1 min-w-0 space-y-1.5">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-1">
+            <div className="flex flex-wrap items-center gap-1 min-w-0">
               <FormatBadge format={edition.format} />
               {edition.is_preorder && (
-                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">
-                  Pre-order
+                <span className="text-[9px] font-medium px-1 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                  Pre
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2">
-              {edition.isbn && (
-                <span className="text-xs font-mono text-slate-500">
-                  {edition.isbn}
-                </span>
-              )}
+            <div className="flex items-center shrink-0">
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                aria-label="Edit edition"
+                className="p-0.5 text-slate-400 hover:text-teal-600"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -890,66 +811,299 @@ function EditionCard({
                 }}
                 aria-label="Delete edition"
                 disabled={del.isPending}
-                className="p-1 text-slate-400 hover:text-rose-600 disabled:opacity-50"
+                className="p-0.5 text-slate-400 hover:text-rose-600 disabled:opacity-50"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Trash2 className="h-3 w-3" />
               </button>
             </div>
           </div>
           {edition.display_name && (
-            <p className="text-sm font-medium text-slate-800">
+            <p className="text-xs font-medium text-slate-800 truncate">
               {edition.display_name}
             </p>
           )}
-          <EditionMeta edition={edition} />
-          <div className="flex items-center gap-2 pt-1">
-            <label
-              htmlFor={fileInputId}
-              className="text-[11px] text-teal-600 hover:text-teal-700 inline-flex items-center gap-1 cursor-pointer"
-            >
-              <Upload className="h-3 w-3" />
-              {setCover.isPending
-                ? 'Uploading…'
-                : edition.cover_path
-                  ? 'Replace cover'
-                  : 'Upload cover'}
-              <input
-                id={fileInputId}
-                type="file"
-                accept="image/*"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0]
-                  if (!file) return
-                  try {
-                    await setCover.mutateAsync(file)
-                    e.target.value = ''
-                  } catch {
-                    /* error rendered below */
-                  }
-                }}
-                disabled={setCover.isPending}
-                className="hidden"
-              />
-            </label>
-            {edition.cover_path && (
-              <button
-                type="button"
-                onClick={() => clearCover.mutate()}
-                disabled={clearCover.isPending}
-                className="text-[11px] text-slate-500 hover:text-slate-700"
-              >
-                Use book cover
-              </button>
-            )}
-          </div>
-          {setCover.error && (
-            <p className="text-[10px] text-rose-600">
-              {setCover.error.message}
+          {edition.isbn && (
+            <p className="text-[10px] font-mono text-slate-500 truncate">
+              {edition.isbn}
             </p>
           )}
+          <EditionMeta edition={edition} compact />
         </div>
       </div>
     </li>
+  )
+}
+
+function EditionEditForm({
+  edition,
+  onClose,
+}: {
+  edition: EditionRow
+  book: import('../lib/database.types.ts').BookRow
+  onClose: () => void
+}) {
+  const update = useUpdateEdition(edition.id, edition.book_id)
+  const pubYear = edition.publication_date?.slice(0, 4) ?? ''
+
+  const [format, setFormat] = useState(edition.format)
+  const [displayName, setDisplayName] = useState(edition.display_name ?? '')
+  const [isbn, setIsbn] = useState(edition.isbn ?? '')
+  const [publisher, setPublisher] = useState(edition.publisher ?? '')
+  const [publishedYear, setPublishedYear] = useState(pubYear)
+  const [pageCount, setPageCount] = useState(
+    edition.page_count != null ? String(edition.page_count) : '',
+  )
+  const [purchaseDate, setPurchaseDate] = useState(edition.purchase_date ?? '')
+  const [purchasePrice, setPurchasePrice] = useState(
+    edition.purchase_price != null ? String(edition.purchase_price) : '',
+  )
+  const purchaseLocation = edition.purchase_location ?? ''
+  const [storeId, setStoreId] = useState(edition.store_id ?? '')
+  const [isPreorder, setIsPreorder] = useState(edition.is_preorder)
+  const [condition, setCondition] = useState<string>(edition.condition ?? '')
+  const [isPurchased, setIsPurchased] = useState(
+    edition.acquired === 'purchased',
+  )
+  const [isLibrary, setIsLibrary] = useState(edition.acquired === 'library')
+  const isEbook = format === 'ebook'
+
+  const togglePurchased = (checked: boolean) => {
+    setIsPurchased(checked)
+    if (checked) setIsLibrary(false)
+  }
+  const toggleLibrary = (checked: boolean) => {
+    setIsLibrary(checked)
+    if (checked) setIsPurchased(false)
+  }
+
+  const onSave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const yearTrim = publishedYear.trim()
+    const pagesTrim = pageCount.trim()
+    const priceTrim = purchasePrice.trim()
+    const input: UpdateEditionInput = {
+      format,
+      isbn: isEbook ? null : isbn.trim() || null,
+      publisher: publisher.trim() || null,
+      publicationYear:
+        yearTrim === '' ? null : Number.isFinite(Number(yearTrim)) ? Number(yearTrim) : null,
+      pageCount:
+        pagesTrim === '' ? null : Number.isFinite(Number(pagesTrim)) ? Number(pagesTrim) : null,
+      durationSeconds: edition.duration_seconds,
+      purchaseDate: isPurchased ? purchaseDate || null : null,
+      purchaseLocation: isPurchased ? purchaseLocation.trim() || null : null,
+      purchasePrice:
+        isPurchased && priceTrim !== '' && Number.isFinite(Number(priceTrim))
+          ? Number(priceTrim)
+          : null,
+      condition:
+        isPurchased && !isEbook
+          ? ((condition || null) as Condition | null)
+          : null,
+      startedAt: edition.started_at,
+      finishedAt: edition.finished_at,
+      isTrophy: edition.is_trophy,
+      storeId: isPurchased ? storeId || null : null,
+      isPreorder: isPurchased ? isPreorder : false,
+      displayName: isEbook ? null : displayName.trim() || null,
+      acquired: isPurchased ? 'purchased' : isLibrary ? 'library' : 'unknown',
+    }
+    await update.mutateAsync(input)
+    onClose()
+  }
+
+  return (
+    <form onSubmit={onSave} className="space-y-2">
+      <p className="text-xs font-medium text-slate-700">Edit edition</p>
+
+      <div>
+        <p className="text-[10px] text-slate-600 mb-0.5">Cover image</p>
+        <EditionCoverEditor
+          editionId={edition.id}
+          bookId={edition.book_id}
+          hasEditionCover={Boolean(edition.cover_path)}
+        />
+      </div>
+
+      {/* Format + ISBN (ISBN hidden for ebooks) */}
+      <div className={`grid gap-2 ${isEbook ? 'grid-cols-1' : 'grid-cols-2'}`}>
+        <label className="block text-[10px] text-slate-600">
+          Format
+          <select
+            value={format}
+            onChange={(e) => setFormat(e.target.value as typeof format)}
+            className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-xs bg-white"
+          >
+            <option value="paperback">Paperback</option>
+            <option value="hardcover">Hardcover</option>
+            <option value="ebook">ePub</option>
+            <option value="audiobook">Audiobook</option>
+            <option value="special_edition">Special</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        {!isEbook && (
+          <label className="block text-[10px] text-slate-600">
+            ISBN
+            <input
+              value={isbn}
+              onChange={(e) => setIsbn(e.target.value)}
+              className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-xs font-mono bg-white"
+            />
+          </label>
+        )}
+      </div>
+
+      {!isEbook && (
+        <label className="block text-[10px] text-slate-600">
+          Edition name
+          <input
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-xs bg-white"
+          />
+        </label>
+      )}
+
+      <div className="grid grid-cols-2 gap-2">
+        <label className="block text-[10px] text-slate-600">
+          Publisher
+          <input
+            value={publisher}
+            onChange={(e) => setPublisher(e.target.value)}
+            className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-xs bg-white"
+          />
+        </label>
+        <label className="block text-[10px] text-slate-600">
+          Year
+          <input
+            type="number"
+            min="0"
+            max="9999"
+            value={publishedYear}
+            onChange={(e) => setPublishedYear(e.target.value)}
+            className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-xs bg-white"
+          />
+        </label>
+      </div>
+
+      <label className="block text-[10px] text-slate-600">
+        Pages
+        <input
+          type="number"
+          min="0"
+          value={pageCount}
+          onChange={(e) => setPageCount(e.target.value)}
+          className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-xs bg-white"
+        />
+      </label>
+
+      {/* Acquired — both optional, mutually exclusive */}
+      <div className="space-y-1 pt-0.5">
+        <p className="text-[10px] font-medium text-slate-600">Acquired</p>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          <label className="inline-flex items-center gap-1.5 text-xs text-slate-700">
+            <input
+              type="checkbox"
+              checked={isPurchased}
+              onChange={(e) => togglePurchased(e.target.checked)}
+              className="accent-teal-500"
+            />
+            Purchased
+          </label>
+          <label className="inline-flex items-center gap-1.5 text-xs text-slate-700">
+            <input
+              type="checkbox"
+              checked={isLibrary}
+              onChange={(e) => toggleLibrary(e.target.checked)}
+              className="accent-teal-500"
+            />
+            Library
+          </label>
+        </div>
+        {!isPurchased && (
+          <p className="text-[10px] text-slate-400">
+            {isLibrary ? 'Acquired: Library' : 'Acquired: not set'}
+          </p>
+        )}
+      </div>
+
+      {isPurchased && (
+        <div className="rounded border border-slate-200 p-2 space-y-2">
+          <p className="text-[10px] font-medium text-slate-600">Acquired info</p>
+          {!isEbook && (
+            <label className="block text-[10px] text-slate-600">
+              Condition
+              <select
+                value={condition}
+                onChange={(e) => setCondition(e.target.value)}
+                className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-xs bg-white"
+              >
+                <option value="">Not set</option>
+                <option value="new">New</option>
+                <option value="second_hand">Second hand</option>
+                <option value="unknown">Unknown</option>
+              </select>
+            </label>
+          )}
+          <label className="block text-[10px] text-slate-600">
+            Location
+            <StoreSelect value={storeId} onChange={setStoreId} className="mt-0.5" />
+          </label>
+          <label className="inline-flex items-center gap-1.5 text-xs text-slate-700">
+            <input
+              type="checkbox"
+              checked={isPreorder}
+              onChange={(e) => setIsPreorder(e.target.checked)}
+              className="accent-teal-500"
+            />
+            Pre-order
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-[10px] text-slate-600">
+              Bought on
+              <PastDateInput
+                value={purchaseDate}
+                onChange={(e) => setPurchaseDate(e.target.value)}
+                className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-xs bg-white"
+              />
+            </label>
+            <label className="block text-[10px] text-slate-600">
+              Price (NZD)
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={purchasePrice}
+                onChange={(e) => setPurchasePrice(e.target.value)}
+                className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-xs bg-white"
+              />
+            </label>
+          </div>
+        </div>
+      )}
+      <div className="flex gap-2 pt-1">
+        <LoadingButton
+          type="submit"
+          pending={update.isPending}
+          pendingLabel="Saving…"
+          className="flex-1 rounded-md bg-teal-500 hover:bg-teal-600 px-3 py-1.5 text-xs text-white"
+        >
+          Save
+        </LoadingButton>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={update.isPending}
+          className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-800"
+        >
+          Cancel
+        </button>
+      </div>
+      {update.error && (
+        <p className="text-[10px] text-rose-600">{update.error.message}</p>
+      )}
+    </form>
   )
 }
 
@@ -1081,33 +1235,43 @@ function CoverUrlEditor({
   )
 }
 
-function EditionMeta({ edition }: { edition: EditionRow }) {
+function EditionMeta({
+  edition,
+  compact = false,
+}: {
+  edition: EditionRow
+  compact?: boolean
+}) {
+  const { data: stores = [] } = useStores()
+  const storeName = edition.store_id
+    ? stores.find((s) => s.id === edition.store_id)?.name ?? null
+    : null
+
   const bits: string[] = []
-  if (edition.page_count != null) bits.push(`${edition.page_count} pages`)
-  if (edition.publication_date)
+  if (edition.page_count != null) bits.push(`${edition.page_count}p`)
+  if (edition.publication_date && !compact)
     bits.push(`pub. ${formatDate(edition.publication_date)}`)
 
   const purchaseBits: string[] = []
-  if (edition.purchase_date)
-    purchaseBits.push(`bought ${formatDate(edition.purchase_date)}`)
-  if (edition.purchase_location) purchaseBits.push(edition.purchase_location)
-  if (edition.purchase_price != null) {
-    const currency = edition.currency ?? 'AUD'
-    purchaseBits.push(`${currency} ${edition.purchase_price}`)
-  }
-  if (edition.condition) {
-    purchaseBits.push(
-      edition.condition === 'second_hand' ? 'second hand' : edition.condition,
-    )
+  if (edition.acquired === 'library') {
+    purchaseBits.push('Library')
+  } else {
+    if (storeName) purchaseBits.push(storeName)
+    if (edition.purchase_date)
+      purchaseBits.push(formatDate(edition.purchase_date))
+    if (edition.purchase_price != null) {
+      const currency = edition.currency ?? 'NZD'
+      purchaseBits.push(`${currency} ${edition.purchase_price}`)
+    }
   }
 
-  if (bits.length === 0 && purchaseBits.length === 0) return null
+  const line = [...bits, ...purchaseBits].join(' · ')
+  if (!line) return null
 
   return (
-    <div className="text-xs text-slate-500 space-y-0.5">
-      {bits.length > 0 && <p>{bits.join(' · ')}</p>}
-      {purchaseBits.length > 0 && <p>{purchaseBits.join(' · ')}</p>}
-    </div>
+    <p className={`text-slate-500 truncate ${compact ? 'text-[10px]' : 'text-xs'}`}>
+      {line}
+    </p>
   )
 }
 

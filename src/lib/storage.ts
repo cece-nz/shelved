@@ -64,6 +64,32 @@ export async function uploadCoverFile(
   return path
 }
 
+/** Download an image URL into a per-edition storage path. */
+export async function downloadAndStoreEditionCover(
+  sourceUrl: string,
+  userId: string,
+  bookId: string,
+  editionId: string,
+): Promise<string> {
+  const res = await fetch(sourceUrl)
+  if (!res.ok) {
+    throw new Error(`Cover fetch failed: ${res.status} ${res.statusText}`)
+  }
+  const blob = await res.blob()
+  if (!blob.type.startsWith('image/')) {
+    throw new Error(
+      `That URL returned ${blob.type || 'unknown content'} — paste a direct image URL.`,
+    )
+  }
+  const path = `${userId}/${bookId}/edition-${editionId}.jpg`
+  const { error } = await supabase.storage.from(BUCKET).upload(path, blob, {
+    contentType: blob.type,
+    upsert: true,
+  })
+  if (error) throw error
+  return path
+}
+
 /** Same as uploadCoverFile but targets a per-edition path. */
 export async function uploadEditionCoverFile(
   file: File,

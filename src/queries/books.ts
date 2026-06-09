@@ -1,9 +1,12 @@
+import { useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase.ts'
 import { downloadAndStoreCover, uploadCoverFile } from '../lib/storage.ts'
 import { useAuth } from '../auth/AuthProvider.tsx'
 import type { IsbnLookupResult } from '../lib/openLibrary.ts'
+import type { BulkBookRow } from '../lib/bulkImport.ts'
 import type {
+  Acquired,
   BookRow,
   Condition,
   Format,
@@ -27,6 +30,54 @@ export function useBooks() {
       return data
     },
   })
+}
+
+/**
+ * Distinct, alphabetically-sorted values across the library, used to
+ * populate the classification dropdowns (reading age / genre / sub genre /
+ * mood) and the series autocomplete. Sub-genres are tracked per genre so
+ * the picker can scope them to the chosen genre.
+ */
+export function useBookFacetValues() {
+  const { data: books = [] } = useBooks()
+  return useMemo(() => {
+    const readingAges = new Set<string>()
+    const genres = new Set<string>()
+    const subGenres = new Set<string>()
+    const moods = new Set<string>()
+    const series = new Set<string>()
+    const subByGenre = new Map<string, Set<string>>()
+    for (const b of books) {
+      if (b.reading_age) readingAges.add(b.reading_age)
+      if (b.genre) genres.add(b.genre)
+      if (b.sub_genre) subGenres.add(b.sub_genre)
+      if (b.mood) moods.add(b.mood)
+      if (b.series_name) series.add(b.series_name)
+      if (b.genre && b.sub_genre) {
+        let set = subByGenre.get(b.genre)
+        if (!set) {
+          set = new Set()
+          subByGenre.set(b.genre, set)
+        }
+        set.add(b.sub_genre)
+      }
+    }
+    const sorted = (s: Set<string>) =>
+      [...s].sort((a, b) => a.localeCompare(b))
+    const allSubGenres = sorted(subGenres)
+    const subGenresByGenre = new Map<string, string[]>()
+    for (const [g, set] of subByGenre) subGenresByGenre.set(g, sorted(set))
+    return {
+      readingAges: sorted(readingAges),
+      genres: sorted(genres),
+      subGenres: allSubGenres,
+      moods: sorted(moods),
+      series: sorted(series),
+      /** Sub-genres used under a genre (all of them if no genre given). */
+      subGenresFor: (genre: string | null) =>
+        genre ? subGenresByGenre.get(genre) ?? [] : allSubGenres,
+    }
+  }, [books])
 }
 
 export function useBook(id: string | undefined) {
@@ -75,6 +126,7 @@ export type EditionInput = {
   displayName: string | null
   isPreorder: boolean
   storeId: string | null
+  acquired: Acquired
 }
 
 export type AddBookInput = {
@@ -86,6 +138,16 @@ export type AddBookInput = {
    * the same work (e.g. via matched workId).
    */
   existingBookId?: string
+  /** Optional user-supplied cover, overriding the Open Library one. */
+  coverFile?: File | null
+  coverUrl?: string | null
+  /** Book-level classification chosen on the add screen (new books only). */
+  readingAge?: string | null
+  genre?: string | null
+  subGenre?: string | null
+  mood?: string | null
+  seriesName?: string | null
+  seriesIndex?: number | null
 }
 
 /**
@@ -109,6 +171,14 @@ export function useAddBookFromIsbn() {
       lookup,
       edition,
       existingBookId,
+      coverFile,
+      coverUrl,
+      readingAge,
+      genre,
+      subGenre,
+      mood,
+      seriesName,
+      seriesIndex,
     }: AddBookInput): Promise<BookRow> => {
       if (!session) throw new Error('Not signed in')
       const userId = session.user.id
@@ -134,7 +204,12 @@ export function useAddBookFromIsbn() {
             publisher: lookup.publisher,
             published_year: lookup.publishedYear,
             description: lookup.description,
-            genres: lookup.categories,
+            reading_age: readingAge ?? null,
+            genre: genre ?? null,
+            sub_genre: subGenre ?? null,
+            mood: mood ?? null,
+            series_name: seriesName ?? null,
+            series_index: seriesIndex ?? null,
             openlibrary_work_id: lookup.workId,
           })
           .select()
@@ -160,6 +235,8 @@ export function useAddBookFromIsbn() {
         display_name: edition.displayName,
         is_preorder: edition.isPreorder,
         store_id: edition.storeId,
+        acquired: edition.acquired,
+        currency: 'NZD',
       })
       if (editionErr) {
         if (createdNew) {
@@ -169,21 +246,27 @@ export function useAddBookFromIsbn() {
       }
 
       // Cover only on freshly-created books — don't clobber an existing
-      // one the user may have curated.
-      if (createdNew && lookup.coverUrl) {
+      // one the user may have curated. Prefer a user-supplied image,
+      // falling back to the Open Library cover.
+      if (createdNew) {
         try {
-          const path = await downloadAndStoreCover(
-            lookup.coverUrl,
-            userId,
-            book.id,
-          )
-          const { data: updated } = await supabase
-            .from('books')
-            .update({ cover_path: path })
-            .eq('id', book.id)
-            .select()
-            .single()
-          if (updated) return updated
+          let path: string | null = null
+          if (coverFile) {
+            path = await uploadCoverFile(coverFile, userId, book.id)
+          } else if (coverUrl) {
+            path = await downloadAndStoreCover(coverUrl, userId, book.id)
+          } else if (lookup.coverUrl) {
+            path = await downloadAndStoreCover(lookup.coverUrl, userId, book.id)
+          }
+          if (path) {
+            const { data: updated } = await supabase
+              .from('books')
+              .update({ cover_path: path })
+              .eq('id', book.id)
+              .select()
+              .single()
+            if (updated) return updated
+          }
         } catch (err) {
           console.warn('Cover upload failed (continuing):', err)
         }
@@ -265,8 +348,10 @@ export type BookMetadataUpdate = {
   publisher?: string | null
   published_year?: number | null
   description?: string | null
-  genres?: string[]
-  tags?: string[]
+  reading_age?: string | null
+  genre?: string | null
+  sub_genre?: string | null
+  mood?: string | null
   series_name?: string | null
   series_index?: number | null
   rating?: number | null
@@ -343,7 +428,30 @@ export function useUpdateBook(bookId: string) {
       if (error) throw error
       return data
     },
-    onSuccess: () => {
+    // Apply the change to the cache immediately (e.g. tag chips, rating,
+    // category) so the UI updates without waiting on the round-trip.
+    onMutate: async (update) => {
+      await qc.cancelQueries({ queryKey: bookKey(bookId) })
+      await qc.cancelQueries({ queryKey: booksKey })
+      const prevBook = qc.getQueryData<BookRow>(bookKey(bookId))
+      const prevBooks = qc.getQueryData<BookRow[]>(booksKey)
+      if (prevBook) {
+        qc.setQueryData<BookRow>(bookKey(bookId), { ...prevBook, ...update })
+      }
+      if (prevBooks) {
+        qc.setQueryData<BookRow[]>(
+          booksKey,
+          prevBooks.map((b) => (b.id === bookId ? { ...b, ...update } : b)),
+        )
+      }
+      return { prevBook, prevBooks }
+    },
+    // Roll back the optimistic change if the save fails.
+    onError: (_err, _update, context) => {
+      if (context?.prevBook) qc.setQueryData(bookKey(bookId), context.prevBook)
+      if (context?.prevBooks) qc.setQueryData(booksKey, context.prevBooks)
+    },
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: bookKey(bookId) })
       qc.invalidateQueries({ queryKey: booksKey })
     },
@@ -402,7 +510,12 @@ export type ManualBookInput = {
   publisher: string | null
   publishedYear: number | null
   description: string | null
-  genres: string[]
+  readingAge: string | null
+  genre: string | null
+  subGenre: string | null
+  mood: string | null
+  seriesName: string | null
+  seriesIndex: number | null
   edition: EditionInput & { isbn: string | null }
 }
 
@@ -419,7 +532,7 @@ export function useAddBookManually() {
   const { session } = useAuth()
 
   return useMutation({
-    mutationFn: async (input: ManualBookInput): Promise<BookRow> => {
+    mutationFn: async (input: ManualBookInputWithCover): Promise<BookRow> => {
       if (!session) throw new Error('Not signed in')
       const userId = session.user.id
 
@@ -432,7 +545,12 @@ export function useAddBookManually() {
           publisher: input.publisher,
           published_year: input.publishedYear,
           description: input.description,
-          genres: input.genres,
+          reading_age: input.readingAge,
+          genre: input.genre,
+          sub_genre: input.subGenre,
+          mood: input.mood,
+          series_name: input.seriesName,
+          series_index: input.seriesIndex,
         })
         .select()
         .single()
@@ -454,16 +572,119 @@ export function useAddBookManually() {
         display_name: input.edition.displayName,
         is_preorder: input.edition.isPreorder,
         store_id: input.edition.storeId,
+        acquired: input.edition.acquired,
+        currency: 'NZD',
       })
       if (editionErr) {
         await supabase.from('books').delete().eq('id', book.id)
         throw editionErr
       }
 
+      try {
+        if (input.coverFile) {
+          const path = await uploadCoverFile(input.coverFile, userId, book.id)
+          const { data: updated } = await supabase
+            .from('books')
+            .update({ cover_path: path })
+            .eq('id', book.id)
+            .select()
+            .single()
+          if (updated) return updated
+        } else if (input.coverUrl?.trim()) {
+          const path = await downloadAndStoreCover(
+            input.coverUrl.trim(),
+            userId,
+            book.id,
+          )
+          const { data: updated } = await supabase
+            .from('books')
+            .update({ cover_path: path })
+            .eq('id', book.id)
+            .select()
+            .single()
+          if (updated) return updated
+        }
+      } catch (err) {
+        console.warn('Cover upload failed (continuing):', err)
+      }
+
       return book
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: booksKey })
+    },
+  })
+}
+
+export type ManualBookInputWithCover = ManualBookInput & {
+  coverFile?: File | null
+  coverUrl?: string | null
+}
+
+export type BulkAddResultItem = {
+  row: BulkBookRow
+  ok: boolean
+  bookId?: string
+  error?: string
+}
+
+/**
+ * Temporary bulk import: one paperback edition per row (ISBN/title/authors only).
+ * Processes rows sequentially so failures don't block the rest.
+ */
+export function useBulkAddBooks() {
+  const qc = useQueryClient()
+  const { session } = useAuth()
+
+  return useMutation({
+    mutationFn: async (rows: BulkBookRow[]): Promise<BulkAddResultItem[]> => {
+      if (!session) throw new Error('Not signed in')
+      const userId = session.user.id
+      const results: BulkAddResultItem[] = []
+
+      for (const row of rows) {
+        try {
+          const { data: book, error: bookErr } = await supabase
+            .from('books')
+            .insert({
+              user_id: userId,
+              title: row.title,
+              authors: row.authors,
+              publisher: null,
+              published_year: null,
+              description: null,
+            })
+            .select()
+            .single()
+          if (bookErr) throw bookErr
+
+          const { error: editionErr } = await supabase.from('editions').insert({
+            user_id: userId,
+            book_id: book.id,
+            format: 'paperback' as Format,
+            isbn: row.isbn,
+            currency: 'NZD',
+          })
+          if (editionErr) {
+            await supabase.from('books').delete().eq('id', book.id)
+            throw editionErr
+          }
+
+          results.push({ row, ok: true, bookId: book.id })
+        } catch (err) {
+          results.push({
+            row,
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+
+      return results
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: booksKey })
+      qc.invalidateQueries({ queryKey: ['editions'] })
     },
   })
 }
