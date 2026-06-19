@@ -10,6 +10,8 @@
 // (the `default=false` query makes it 404 if no cover exists, which the
 // <img> tag's onError can pick up to show a placeholder.)
 
+import type { Format } from './database.types.ts'
+
 export type IsbnLookupResult = {
   isbn: string
   title: string
@@ -20,6 +22,11 @@ export type IsbnLookupResult = {
   categories: string[]
   pageCount: number | null
   coverUrl: string | null
+  /** Edition binding mapped to our format enum — null if OL didn't say. */
+  format: Format | null
+  /** Series, when OL's edition record carries it (often it doesn't). */
+  seriesName: string | null
+  seriesIndex: number | null
   /**
    * Open Library "Work" identifier (e.g. "OL66554W"). Stable across
    * editions: paperback + hardcover + audiobook of the same novel
@@ -67,7 +74,7 @@ export async function searchByTitle(
   const url =
     `https://openlibrary.org/search.json?title=${encodeURIComponent(query)}` +
     `&fields=key,title,author_name,first_publish_year,cover_i,isbn&limit=${limit}`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   if (!res.ok) throw new Error(`Search failed: ${res.status} ${res.statusText}`)
   const data = (await res.json()) as { docs?: SearchDoc[] }
 
@@ -112,6 +119,9 @@ type DataEndpointResponse = Record<string, DataEndpointBook>
 type IsbnEndpointResponse = {
   description?: string | { value?: string }
   works?: { key?: string }[]
+  physical_format?: string
+  series?: string[]
+  number_of_pages?: number
 }
 
 /**
@@ -134,6 +144,9 @@ export async function lookupByIsbn(rawIsbn: string): Promise<IsbnLookupResult> {
 
   if (!book) throw new IsbnNotFoundError(isbn)
 
+  const edition = isbnRes.status === 'fulfilled' ? isbnRes.value : null
+  const series = parseSeries(edition?.series)
+
   return {
     isbn,
     title: book.title ?? 'Untitled',
@@ -142,18 +155,48 @@ export async function lookupByIsbn(rawIsbn: string): Promise<IsbnLookupResult> {
       .filter((n): n is string => Boolean(n)),
     publisher: book.publishers?.[0]?.name ?? null,
     publishedYear: parseYear(book.publish_date),
-    pageCount: book.number_of_pages ?? null,
-    description:
-      isbnRes.status === 'fulfilled' ? extractDescription(isbnRes.value) : null,
-    workId:
-      isbnRes.status === 'fulfilled' ? extractWorkId(isbnRes.value) : null,
+    pageCount: book.number_of_pages ?? edition?.number_of_pages ?? null,
+    description: edition ? extractDescription(edition) : null,
+    workId: edition ? extractWorkId(edition) : null,
     // Cap categories — OL often returns 30+ subjects, mostly low-value.
     categories: (book.subjects ?? [])
       .map((s) => s.name)
       .filter((n): n is string => Boolean(n))
       .slice(0, 8),
     coverUrl: `https://covers.openlibrary.org/b/isbn/${isbn}-L.jpg?default=false`,
+    format: mapPhysicalFormat(edition?.physical_format),
+    seriesName: series?.name ?? null,
+    seriesIndex: series?.index ?? null,
   }
+}
+
+/** Map a free-text binding string (OL physical_format / Hardcover edition_format) to our enum. */
+export function mapPhysicalFormat(raw: string | undefined): Format | null {
+  if (!raw) return null
+  const s = raw.toLowerCase()
+  if (/audio|\bcd\b|cassette|mp3|spoken/.test(s)) return 'audiobook'
+  if (/kindle|e-?book|electronic|epub|digital/.test(s)) return 'ebook'
+  if (/hardcover|hardback|library binding|board book/.test(s)) return 'hardcover'
+  if (/paperback|softcover|mass market|trade paper|pocket/.test(s))
+    return 'paperback'
+  if (/special|deluxe|collector|box ?set|slipcase/.test(s))
+    return 'special_edition'
+  return null
+}
+
+/** Parse OL's series strings (e.g. "The Empyrean #1") into name + number. */
+function parseSeries(
+  series: string[] | undefined,
+): { name: string; index: number | null } | null {
+  const raw = series?.[0]?.trim()
+  if (!raw) return null
+  const clean = (s: string) => s.replace(/[\s#(),;:.\-]+$/, '').trim()
+  const m = raw.match(/^(.*?)[\s,(]*#?\s*(\d+(?:\.\d+)?)\s*\)?\s*$/)
+  if (m && clean(m[1])) {
+    return { name: clean(m[1]), index: Number(m[2]) }
+  }
+  const name = clean(raw)
+  return name ? { name, index: null } : null
 }
 
 /** Strip hyphens and whitespace; uppercase any trailing X check digit. */
@@ -161,8 +204,34 @@ export function normalizeIsbn(input: string): string {
   return input.replace(/[\s-]/g, '').toUpperCase()
 }
 
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Open Library's endpoints intermittently 500, and their error responses
+ * lack CORS headers — so in the browser a 500 surfaces as a thrown
+ * "Failed to fetch" rather than a 500 response. Retry a couple of times
+ * with a short backoff to ride out those transient blips.
+ */
+async function fetchWithRetry(url: string, retries = 2): Promise<Response> {
+  let lastErr: unknown
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(url)
+      if (res.status >= 500 && attempt < retries) {
+        await delay(400 * (attempt + 1))
+        continue
+      }
+      return res
+    } catch (err) {
+      lastErr = err
+      if (attempt >= retries) throw lastErr
+      await delay(400 * (attempt + 1))
+    }
+  }
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   if (!res.ok) throw new Error(`${url} → ${res.status} ${res.statusText}`)
   return res.json() as Promise<T>
 }

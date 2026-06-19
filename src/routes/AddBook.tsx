@@ -14,13 +14,13 @@ import { z } from 'zod'
 import { Search, BookPlus, Camera, BookCheck, Info, X } from 'lucide-react'
 import {
   IsbnNotFoundError,
-  lookupByIsbn,
   looksLikeIsbn,
   normalizeIsbn,
   searchByTitle,
   type IsbnLookupResult,
   type TitleSearchResult,
 } from '../lib/openLibrary.ts'
+import { lookupBook } from '../lib/bookLookup.ts'
 import { LoadingButton } from '../components/LoadingButton.tsx'
 import { PastDateInput } from '../components/PastDateInput.tsx'
 import { FacetSelect } from '../components/FacetSelect.tsx'
@@ -253,6 +253,15 @@ function SeriesFields({
   )
 }
 
+/** Friendly text for Open Library hiccups (its 500s show up as "Failed to fetch"). */
+function olErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (/failed to fetch|networkerror|load failed|5\d\d/i.test(msg)) {
+    return 'Open Library isn’t responding right now. Try again in a moment, or use “Add manually”.'
+  }
+  return msg
+}
+
 function priceToNull(raw: string): number | null {
   const t = raw.trim()
   if (t === '') return null
@@ -334,7 +343,7 @@ function IsbnAddFlow() {
   const [seriesIndex, setSeriesIndex] = useState('')
 
   const lookupMutation = useMutation({
-    mutationFn: (isbn: string) => lookupByIsbn(isbn),
+    mutationFn: (isbn: string) => lookupBook(isbn),
     onSuccess: () => {
       setCoverFailed(false)
       setForceSeparate(false)
@@ -361,6 +370,14 @@ function IsbnAddFlow() {
   const matchQuery = useBookByWorkId(lookup?.workId)
   const existingBook = matchQuery.data
   const willMerge = Boolean(existingBook && !forceSeparate)
+
+  // Prefill format + series from the lookup when Open Library provides them.
+  useEffect(() => {
+    if (!lookup) return
+    if (lookup.format) editionForm.setValue('format', lookup.format)
+    if (lookup.seriesName) setSeriesName(lookup.seriesName)
+    if (lookup.seriesIndex != null) setSeriesIndex(String(lookup.seriesIndex))
+  }, [lookup, editionForm])
 
   const onSubmit = ({ query }: LookupFormValues) => {
     const trimmed = query.trim()
@@ -442,12 +459,12 @@ function IsbnAddFlow() {
           <p className="text-xs text-rose-600 mt-1">
             {lookupMutation.error instanceof IsbnNotFoundError
               ? `No match on Open Library. Try "Add manually" above.`
-              : `Lookup failed: ${lookupMutation.error.message}`}
+              : olErrorMessage(lookupMutation.error)}
           </p>
         )}
         {searchMutation.error && (
           <p className="text-xs text-rose-600 mt-1">
-            Search failed: {searchMutation.error.message}
+            {olErrorMessage(searchMutation.error)}
           </p>
         )}
       </form>
@@ -775,7 +792,7 @@ function AddEditionFlow({ initialBookId }: { initialBookId: string | null }) {
   // Optional ISBN lookup to auto-fill edition fields when attaching to
   // an existing book — just for convenience.
   const isbnLookup = useMutation({
-    mutationFn: (isbn: string) => lookupByIsbn(isbn),
+    mutationFn: (isbn: string) => lookupBook(isbn),
   })
 
   const form = useForm<EditionForExistingValues>({
@@ -804,6 +821,7 @@ function AddEditionFlow({ initialBookId }: { initialBookId: string | null }) {
     if (l.publishedYear) form.setValue('publishedYear', String(l.publishedYear))
     if (l.pageCount != null) form.setValue('pageCount', String(l.pageCount))
     if (l.publisher) form.setValue('publisher', l.publisher)
+    if (l.format) form.setValue('format', l.format)
   }, [isbnLookup.data, form])
 
   const onSubmit = async (v: EditionForExistingValues) => {
@@ -924,7 +942,7 @@ function AddEditionFlow({ initialBookId }: { initialBookId: string | null }) {
           <p className="text-xs text-rose-600">
             {isbnLookup.error instanceof IsbnNotFoundError
               ? 'No match — fill in details below manually.'
-              : isbnLookup.error.message}
+              : olErrorMessage(isbnLookup.error)}
           </p>
         )}
       </div>

@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
 .netlify
 
 # Claude Code local state (per-user permissions + transient worktrees)
