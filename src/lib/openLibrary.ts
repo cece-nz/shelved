@@ -27,6 +27,9 @@ export type IsbnLookupResult = {
   /** Series, when OL's edition record carries it (often it doesn't). */
   seriesName: string | null
   seriesIndex: number | null
+  /** Genre/mood suggestions from Hardcover, merged in by bookLookup.ts. */
+  genreSuggestions: string[]
+  moodSuggestions: string[]
   /**
    * Open Library "Work" identifier (e.g. "OL66554W"). Stable across
    * editions: paperback + hardcover + audiobook of the same novel
@@ -85,7 +88,7 @@ export async function searchByTitle(
         .filter((i) => /^(\d{13}|\d{9}[\dX])$/.test(i))
       return {
         workKey: doc.key?.replace(/^\/works\//, '') ?? '',
-        title: doc.title ?? 'Untitled',
+        title: cleanTitle(doc.title ?? 'Untitled'),
         authors: doc.author_name ?? [],
         firstPublishYear: doc.first_publish_year ?? null,
         coverUrl: doc.cover_i
@@ -149,7 +152,7 @@ export async function lookupByIsbn(rawIsbn: string): Promise<IsbnLookupResult> {
 
   return {
     isbn,
-    title: book.title ?? 'Untitled',
+    title: cleanTitle(book.title ?? 'Untitled'),
     authors: (book.authors ?? [])
       .map((a) => a.name)
       .filter((n): n is string => Boolean(n)),
@@ -167,6 +170,8 @@ export async function lookupByIsbn(rawIsbn: string): Promise<IsbnLookupResult> {
     format: mapPhysicalFormat(edition?.physical_format),
     seriesName: series?.name ?? null,
     seriesIndex: series?.index ?? null,
+    genreSuggestions: [],
+    moodSuggestions: [],
   }
 }
 
@@ -202,6 +207,15 @@ function parseSeries(
 /** Strip hyphens and whitespace; uppercase any trailing X check digit. */
 export function normalizeIsbn(input: string): string {
   return input.replace(/[\s-]/g, '').toUpperCase()
+}
+
+/**
+ * Open Library often bakes the series number into the title, e.g.
+ * "Daughter of the Drowned Empire #1". Strip a trailing "#N" / "(#N)" /
+ * ", #N" so the title is clean (the series lives in its own field).
+ */
+function cleanTitle(title: string): string {
+  return title.replace(/\s*[,(]?\s*#\s*\d+(?:\.\d+)?\s*\)?\s*$/, '').trim() || title
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))

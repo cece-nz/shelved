@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -9,11 +9,10 @@ import {
   LogOut,
   X,
   Store,
-  Download,
 } from 'lucide-react'
 import { useAuth } from '../auth/AuthProvider.tsx'
 import { supabase } from '../lib/supabase.ts'
-import { exportBooksToCsv } from '../lib/exportBooks.ts'
+import { ExportCsvButton } from './ExportCsvButton.tsx'
 
 const navItems = [
   { to: '/', label: 'Home', icon: BookOpen, end: true },
@@ -27,21 +26,6 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
   const { session } = useAuth()
   const email = session?.user.email ?? ''
   const initial = (email || '?').charAt(0).toUpperCase()
-  const [exporting, setExporting] = useState(false)
-
-  const onExport = async () => {
-    setExporting(true)
-    try {
-      await exportBooksToCsv()
-      onClose()
-    } catch (err) {
-      window.alert(
-        `Export failed: ${err instanceof Error ? err.message : 'unknown error'}`,
-      )
-    } finally {
-      setExporting(false)
-    }
-  }
 
   // Close on Esc
   useEffect(() => {
@@ -112,15 +96,10 @@ export function Drawer({ open, onClose }: { open: boolean; onClose: () => void }
                 </NavLink>
               ))}
 
-              <button
-                type="button"
-                onClick={onExport}
-                disabled={exporting}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60"
-              >
-                <Download className="h-4 w-4" />
-                <span>{exporting ? 'Exporting…' : 'Export CSV'}</span>
-              </button>
+              <ExportCsvButton
+                onSuccess={onClose}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-100"
+              />
             </nav>
 
             <div className="p-3 border-t border-slate-100 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">

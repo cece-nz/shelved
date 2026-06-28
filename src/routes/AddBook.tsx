@@ -154,6 +154,42 @@ function deriveAcquired(v: { isPurchased: boolean; isLibrary: boolean }): Acquir
   return 'unknown'
 }
 
+/** Tappable suggestion chips from Hardcover. Tap to apply, tap again to clear. */
+function SuggestionChips({
+  label,
+  suggestions,
+  active,
+  onPick,
+}: {
+  label: string
+  suggestions: string[]
+  active: string
+  onPick: (v: string) => void
+}) {
+  if (suggestions.length === 0) return null
+  return (
+    <div>
+      <p className="text-xs text-slate-500 mb-1.5">{label}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {suggestions.map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => onPick(active === s ? '' : s)}
+            className={`rounded-full px-2.5 py-0.5 text-xs border transition-colors ${
+              active === s
+                ? 'bg-teal-500 text-white border-teal-500'
+                : 'bg-white text-slate-700 border-slate-300 hover:border-teal-400 hover:text-teal-700'
+            }`}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /** Book-level classification pickers (Reading age / Genre / Sub genre / Mood). */
 function FacetFieldset({
   facets,
@@ -499,12 +535,35 @@ function IsbnAddFlow() {
                   index={seriesIndex}
                   setIndex={setSeriesIndex}
                 />
+                {(lookup.genreSuggestions.length > 0 || lookup.moodSuggestions.length > 0) && (
+                  <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-medium text-slate-600">Hardcover suggests</p>
+                    <SuggestionChips
+                      label="Genre"
+                      suggestions={lookup.genreSuggestions}
+                      active={genre}
+                      onPick={(v) => {
+                        setGenre(v)
+                        setSubGenre('')
+                      }}
+                    />
+                    <SuggestionChips
+                      label="Mood"
+                      suggestions={lookup.moodSuggestions}
+                      active={mood}
+                      onPick={setMood}
+                    />
+                  </div>
+                )}
                 <FacetFieldset
                   facets={facets}
                   readingAge={readingAge}
                   setReadingAge={setReadingAge}
                   genre={genre}
-                  setGenre={setGenre}
+                  setGenre={(v) => {
+                    setGenre(v)
+                    setSubGenre('')
+                  }}
                   subGenre={subGenre}
                   setSubGenre={setSubGenre}
                   mood={mood}
@@ -1412,6 +1471,12 @@ function PreviewCard({
         <p className="text-sm text-slate-600 truncate">
           {lookup.authors.join(', ') || 'Unknown author'}
         </p>
+        {lookup.seriesName && (
+          <p className="text-xs text-teal-700 truncate">
+            {lookup.seriesName}
+            {lookup.seriesIndex != null && ` #${lookup.seriesIndex}`}
+          </p>
+        )}
         {lookup.publishedYear && (
           <p className="text-xs text-slate-500 truncate">{lookup.publishedYear}</p>
         )}

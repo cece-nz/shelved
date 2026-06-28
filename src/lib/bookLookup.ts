@@ -20,5 +20,7 @@ export async function lookupBook(isbn: string): Promise<IsbnLookupResult> {
     seriesName: hc.seriesName ?? base.seriesName,
     seriesIndex: hc.seriesIndex ?? base.seriesIndex,
     pageCount: base.pageCount ?? hc.pages ?? null,
+    genreSuggestions: hc.genreSuggestions,
+    moodSuggestions: hc.moodSuggestions,
   }
 }

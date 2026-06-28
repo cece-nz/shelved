@@ -10,6 +10,8 @@ export type HardcoverEnrichment = {
   seriesName: string | null
   seriesIndex: number | null
   pages: number | null
+  genreSuggestions: string[]
+  moodSuggestions: string[]
 }
 
 export async function lookupHardcover(
@@ -30,6 +32,8 @@ export async function lookupHardcover(
           ? Number(data.seriesIndex)
           : null,
       pages: data.pages ?? null,
+      genreSuggestions: Array.isArray(data.genres) ? data.genres : [],
+      moodSuggestions: Array.isArray(data.moods) ? data.moods : [],
     }
   } catch {
     return null
